@@ -6,12 +6,13 @@
 |---|---|---|
 | Raspberry Pi 4 (2GB+ RAM) | 1 | 4GB recommended |
 | Raspberry Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
-| Red LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2V forward voltage |
-| Green LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2.2V forward voltage |
-| 150Ω resistor | 2 | Current limiting for LEDs (see calculation below) |
-| 2N2222 NPN transistor | 2 | To drive LEDs over 5m cable (recommended) |
-| 1kΩ resistor | 2 | Base resistor for transistors |
-| 2-core cable (0.75mm²) | ~12m | 2×5m runs + spare (e.g. speaker wire or bell wire) |
+| Red LED (5mm, standard) | 1 | No flow indicator (~20mA, ~2V Vf) |
+| Amber/Yellow LED (5mm, standard) | 1 | Rinse indicator (~20mA, ~2.1V Vf) |
+| Green LED (5mm, standard) | 1 | Online indicator (~20mA, ~2.2V Vf) |
+| 150Ω resistor | 3 | Current limiting for LEDs (see calculation below) |
+| 2N2222 NPN transistor | 3 | To drive LEDs over 5m cable (recommended) |
+| 1kΩ resistor | 3 | Base resistor for transistors |
+| 2-core cable (0.75mm²) | ~18m | 3×5m runs + spare (e.g. speaker wire or bell wire) |
 | Breadboard or strip board | 1 | For Pi-side circuit |
 | Screw terminal block | 1 | To connect cables cleanly |
 | MicroSD card (32GB+) | 1 | With Raspberry Pi OS |
@@ -32,7 +33,7 @@ Raspberry Pi 4 GPIO Header (BCM numbering)
         GND  (9) (10) GPIO15
  ►  GPIO17 (11) (12) GPIO18        ◄── GREEN LED pin (BCM 17)
  ►  GPIO27 (13) (14) GND           ◄── RED LED pin (BCM 27)
-      GPIO22 (15) (16) GPIO23
+ ►  GPIO22 (15) (16) GPIO23        ◄── AMBER LED pin (BCM 22)
         3V3 (17) (18) GPIO24
       GPIO10 (19) (20) GND
       GPIO9  (21) (22) GPIO25
@@ -40,6 +41,14 @@ Raspberry Pi 4 GPIO Header (BCM numbering)
         GND (25) (26) GPIO7
       ...
 ```
+
+### Traffic Light States
+
+| State | LED | Meaning |
+|---|---|---|
+| **RED** | Red ON, Amber OFF, Green OFF | No flow (0 GPM) |
+| **AMBER** | Red OFF, Amber ON, Green OFF | Rinse mode (≤10 GPM) |
+| **GREEN** | Red OFF, Amber OFF, Green ON | Online (>10 GPM) |
 
 ### Important: 5-Metre Cable Run
 
@@ -49,7 +58,7 @@ The LEDs are mounted **~5 metres away** from the Raspberry Pi (Pi + camera sit a
 
 Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rail**, which has more headroom for the voltage drop over 5m.
 
-**Circuit at the Pi (for EACH LED — repeat for green and red):**
+**Circuit at the Pi (for EACH LED — repeat for green, amber, and red):**
 
 ```
                         Pi 5V (Pin 2 or 4)
@@ -74,7 +83,7 @@ Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rai
     Base (B) ──[ 1kΩ ]──►── GPIO pin
 ```
 
-**Green LED:**
+**Green LED (Online >10 GPM):**
 ```
   GPIO 17 (Pin 11) ──[ 1kΩ ]──► 2N2222 Base
                                  Emitter → GND (Pin 9)
@@ -82,7 +91,15 @@ Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rai
   Pi 5V (Pin 2) ─────────────→ 5m cable (power wire)
 ```
 
-**Red LED:**
+**Amber LED (Rinse ≤10 GPM):**
+```
+  GPIO 22 (Pin 15) ──[ 1kΩ ]──► 2N2222 Base
+                                 Emitter → GND (Pin 20)
+                                 Collector → 5m cable → 150Ω → Amber LED → 5m return cable → GND
+  Pi 5V (Pin 2) ─────────────→ 5m cable (power wire)
+```
+
+**Red LED (No Flow):**
 ```
   GPIO 27 (Pin 13) ──[ 1kΩ ]──► 2N2222 Base
                                  Emitter → GND (Pin 14)
@@ -100,6 +117,7 @@ Vled ≈ 2.0V (red) / 2.2V (green)
 I_led = 15mA (bright enough for indicator)
 
 R = (5V - 0.7V - 0.2V - 2.0V) / 0.015A = 140Ω → use 150Ω standard value
+For amber: (5V - 0.7V - 0.2V - 2.1V) / 0.015A = 133Ω → 150Ω is fine
 For green: (5V - 0.7V - 0.2V - 2.2V) / 0.015A = 127Ω → 150Ω is fine (slightly dimmer)
 ```
 
@@ -108,6 +126,7 @@ For green: (5V - 0.7V - 0.2V - 2.2V) / 0.015A = 127Ω → 150Ω is fine (slightl
 If you later move the LEDs closer to the Pi (< 0.5m), you can skip the transistors:
 ```
   GPIO 17 (Pin 11) ── [ 150Ω ] ── Green LED (+) ── GND (Pin 9)
+  GPIO 22 (Pin 15) ── [ 150Ω ] ── Amber LED (+) ── GND (Pin 20)
   GPIO 27 (Pin 13) ── [ 150Ω ] ── Red LED (+)   ── GND (Pin 14)
 ```
 ⚠️ This will NOT work reliably over 5m cable.
@@ -117,18 +136,19 @@ If you later move the LEDs closer to the Pi (< 0.5m), you can skip the transisto
 | Signal | BCM GPIO | Physical Pin | Pi-Side Component | Cable | LED-Side |
 |---|---|---|---|---|---|
 | Green LED | GPIO 17 | Pin 11 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Green LED → return |
+| Amber LED | GPIO 22 | Pin 15 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Amber LED → return |
 | Red LED | GPIO 27 | Pin 13 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Red LED → return |
 | 5V Power | — | Pin 2 + Pin 4 | Transistor collector | Via cable | Powers LEDs |
-| Ground | — | Pin 9 + Pin 14 | Transistor emitter | Via return cable | LED cathode |
+| Ground | — | Pin 9, 14, 20 | Transistor emitter | Via return cable | LED cathode |
 
 ### Cable Tips for 5m Run
 
 - Use **0.75mm² 2-core cable** (speaker wire, bell wire, or alarm cable all work)
 - Each LED needs its own 2-core run: one wire for +5V, one for GND return
-- That's **2 cables × 5m = 10m total cable** (plus spare)
+- That's **3 cables × 5m = 15m total cable** (plus spare)
 - Solder connections at the LED end, or use screw terminals
 - Keep the cable away from mains/high-voltage wiring to avoid interference
-- Label your cables (green/red) at both ends
+- Label your cables (green/amber/red) at both ends
 
 ---
 
@@ -312,18 +332,19 @@ sudo systemctl status lupw-flow.service
 For quick reference, here's everything you need to buy:
 
 **Electronics (Pi side):**
-- [ ] 2× 2N2222 NPN transistor (~£0.10 each)
-- [ ] 2× 1kΩ resistor (1/4W, for transistor bases)
+- [ ] 3× 2N2222 NPN transistor (~£0.10 each)
+- [ ] 3× 1kΩ resistor (1/4W, for transistor bases)
 - [ ] 1× breadboard or strip board
 - [ ] Jumper wires
 
 **LED side (5m away):**
 - [ ] 1× 5mm red LED
+- [ ] 1× 5mm amber/yellow LED
 - [ ] 1× 5mm green LED
-- [ ] 2× 150Ω resistor (1/4W, current limiting)
+- [ ] 3× 150Ω resistor (1/4W, current limiting)
 
 **Cable:**
-- [ ] ~12m of 2-core 0.75mm² cable (e.g., speaker wire) — 2 runs of 5m + spare
+- [ ] ~18m of 2-core 0.75mm² cable (e.g., speaker wire) — 3 runs of 5m + spare
 
 **Already needed:**
 - [ ] Raspberry Pi 4 (4GB)

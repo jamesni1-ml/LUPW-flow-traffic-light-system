@@ -1,6 +1,6 @@
 # LUPW Flow Traffic Light System
 
-A computer vision system that reads **rotameter flow meters** in real-time using a Raspberry Pi 4 and Camera Module 2. When flow drops to zero, it signals a traffic light (red = no flow, green = flowing).
+A computer vision system that reads **rotameter flow meters** in real-time using a Raspberry Pi 4 and Camera Module 2. Controls a 3-state traffic light: red (no flow), amber (rinse ≤10 GPM), green (online >10 GPM).
 
 ---
 
@@ -8,11 +8,11 @@ A computer vision system that reads **rotameter flow meters** in real-time using
 
 | | |
 |---|---|
-| **Task** | Read rotameter flow level from camera images, detect zero-flow events |
+| **Task** | Read rotameter flow level from camera images, detect zero-flow and rinse events |
 | **Model** | MobileNetV2 (dual-head: flow regression + zero-flow classifier) |
 | **Inference** | TensorFlow Lite (float16 quantized) on Raspberry Pi 4 |
 | **Camera** | Raspberry Pi Camera Module 2 (12MP) |
-| **Output** | GPIO-controlled traffic light LEDs (green = flow, red = zero flow) |
+| **Output** | GPIO-controlled 3-state traffic light: RED (no flow) / AMBER (rinse ≤10 GPM) / GREEN (online >10 GPM) |
 
 ---
 
@@ -42,9 +42,10 @@ LUPW-flow-traffic-light-system/
    - **Flow value** (continuous regression, 0 to max scale)
    - **Zero-flow probability** (binary classification)
 3. **Decision logic** combines both outputs with a debounce mechanism (3 consecutive zero readings required)
-4. **GPIO signals** control traffic light LEDs:
-   - **Green LED** (GPIO 17, Pin 11) → flow is active
-   - **Red LED** (GPIO 27, Pin 13) → flow is zero
+4. **GPIO signals** control 3-state traffic light LEDs:
+   - **Red LED** (GPIO 27, Pin 13) → no flow (0 GPM)
+   - **Amber LED** (GPIO 22, Pin 15) → rinse (≤10 GPM)
+   - **Green LED** (GPIO 17, Pin 11) → online (>10 GPM)
 
 ---
 
@@ -54,16 +55,20 @@ LUPW-flow-traffic-light-system/
 |---|---|---|
 | Raspberry Pi 4 | 1 | 4GB RAM recommended |
 | Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
-| Red LED (5mm) | 1 | Or traffic light module |
-| Green LED (5mm) | 1 | Or traffic light module |
-| 330Ω resistor | 2 | Current limiting for LEDs |
-| Breadboard + jumper wires | 1 set | For prototyping |
+| Red LED (5mm) | 1 | No flow indicator |
+| Amber/Yellow LED (5mm) | 1 | Rinse indicator |
+| Green LED (5mm) | 1 | Online indicator |
+| 150Ω resistor | 3 | Current limiting for LEDs |
+| 2N2222 NPN transistor | 3 | Required for 5m cable run |
+| 1kΩ resistor | 3 | Base resistor for transistors |
+| 2-core cable (0.75mm²) | ~18m | 3×5m runs + spare |
 
 ### Wiring
 
 ```
-GPIO 17 (Pin 11) → 330Ω → Green LED (+) → GND (Pin 9)
-GPIO 27 (Pin 13) → 330Ω → Red LED (+)   → GND (Pin 14)
+GPIO 17 (Pin 11) → 1kΩ → 2N2222 → 5m cable → 150Ω → Green LED → return → GND
+GPIO 22 (Pin 15) → 1kΩ → 2N2222 → 5m cable → 150Ω → Amber LED → return → GND
+GPIO 27 (Pin 13) → 1kΩ → 2N2222 → 5m cable → 150Ω → Red LED   → return → GND
 ```
 
 See [setup_guide.md](setup_guide.md) for full wiring diagram and pin layout.
@@ -155,10 +160,11 @@ Flow Value  Classifier
 | Parameter | Default | Description |
 |---|---|---|
 | `--model` | `rotameter_model_fp16.tflite` | Path to TFLite model |
-| `--max-flow` | `10.0` | Your rotameter's max scale reading |
+| `--max-flow` | `100.0` | Your rotameter's max scale reading (GPM) |
+| `--rinse-gpm` | `10.0` | GPM threshold: ≤ this = amber, > this = green |
 | `--interval` | `0.5` | Seconds between readings |
 | `--log` | `flow_log.csv` | CSV output file for flow readings |
-| `FLOW_THRESHOLD` | `0.05` | Below 5% of scale = zero flow |
+| `FLOW_THRESHOLD` | `0.05` | Below 5% of scale = zero flow (red) |
 | `DEBOUNCE_COUNT` | `3` | Consecutive zero readings before red |
 
 ---
