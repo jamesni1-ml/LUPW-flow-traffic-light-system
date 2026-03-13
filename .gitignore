@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# YOLOv8 training runs
+runs/
+
+# Dataset images (too large for git - use Git LFS or download separately)
+# dataset/images/
+
+# Model weights
+*.pt
+*.onnx
+*.engine
+!yolov8n.pt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+venv/
+.env/

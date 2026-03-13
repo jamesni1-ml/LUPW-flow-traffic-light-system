@@ -1,0 +1,13 @@
+# LUPW Flow Traffic Light System - YOLOv8 Dataset Config
+# Classes:
+#   0: tube  - the rotameter glass/plastic tube body
+#   1: float - the ball or bobbin indicator inside the tube
+
+path: ./dataset
+train: images/train
+val: images/val
+
+nc: 2
+names:
+  0: tube
+  1: float
