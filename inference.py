@@ -5,10 +5,16 @@ Rotameter Flow Meter Reader - Raspberry Pi Inference Script
 Uses YOLOv8 to detect the float position in a rotameter and controls
 traffic light LEDs via GPIO.
 
+Traffic light states:
+  RED    = No flow (zero GPM)
+  AMBER  = Rinse mode (≤10 GPM)
+  GREEN  = Online (>10 GPM)
+
 Hardware:
   - Raspberry Pi 4
   - Raspberry Pi Camera Module 2
   - Green LED on GPIO 17 (Pin 11)
+  - Amber LED on GPIO 22 (Pin 15)
   - Red LED on GPIO 27 (Pin 13)
 """
 
@@ -23,11 +29,13 @@ import RPi.GPIO as GPIO
 
 # ── GPIO Pin Configuration ──────────────────────────────────────────
 GREEN_LED_PIN = 17   # BCM GPIO 17 = Physical Pin 11
+AMBER_LED_PIN = 22   # BCM GPIO 22 = Physical Pin 15
 RED_LED_PIN = 27     # BCM GPIO 27 = Physical Pin 13
 
 # ── Flow Configuration ──────────────────────────────────────────────
 MAX_FLOW_RATE = 100.0       # Set to your rotameter's max scale reading
 ZERO_FLOW_THRESHOLD = 0.05  # Below 5% of scale = considered zero flow
+RINSE_GPM = 10.0            # At or below this GPM = rinse (amber)
 
 # ── Model Configuration ─────────────────────────────────────────────
 MODEL_PATH = "best.pt"      # Path to your trained YOLOv8 model
@@ -43,22 +51,21 @@ def setup_gpio():
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     GPIO.setup(GREEN_LED_PIN, GPIO.OUT)
+    GPIO.setup(AMBER_LED_PIN, GPIO.OUT)
     GPIO.setup(RED_LED_PIN, GPIO.OUT)
-    set_traffic_light(flow_on=False)  # Start with red (safe default)
+    set_traffic_light("RED")  # Start with red (safe default)
 
 
-def set_traffic_light(flow_on: bool):
+def set_traffic_light(state: str):
     """
     Control the traffic light LEDs.
-      flow_on=True  → GREEN on, RED off
-      flow_on=False → GREEN off, RED on
+      'RED'   → RED on, AMBER off, GREEN off  (no flow)
+      'AMBER' → RED off, AMBER on, GREEN off  (rinse ≤10 GPM)
+      'GREEN' → RED off, AMBER off, GREEN on  (online >10 GPM)
     """
-    if flow_on:
-        GPIO.output(GREEN_LED_PIN, GPIO.HIGH)
-        GPIO.output(RED_LED_PIN, GPIO.LOW)
-    else:
-        GPIO.output(GREEN_LED_PIN, GPIO.LOW)
-        GPIO.output(RED_LED_PIN, GPIO.HIGH)
+    GPIO.output(GREEN_LED_PIN, GPIO.HIGH if state == "GREEN" else GPIO.LOW)
+    GPIO.output(AMBER_LED_PIN, GPIO.HIGH if state == "AMBER" else GPIO.LOW)
+    GPIO.output(RED_LED_PIN, GPIO.HIGH if state == "RED" else GPIO.LOW)
 
 
 def setup_camera(resolution=(640, 480)):
@@ -127,14 +134,42 @@ def calculate_flow(results, max_flow_rate):
     return flow_rate, position_ratio
 
 
-def draw_overlay(frame, results, flow_rate, position_ratio, is_flowing):
+def get_traffic_state(flow_rate):
+    """
+    Determine traffic light state from flow rate in GPM.
+      flow_rate == 0 (or None) → 'RED'    (no flow)
+      0 < flow_rate <= 10 GPM  → 'AMBER'  (rinse)
+      flow_rate > 10 GPM       → 'GREEN'  (online)
+    """
+    if flow_rate is None or flow_rate <= 0:
+        return "RED"
+    elif flow_rate <= RINSE_GPM:
+        return "AMBER"
+    else:
+        return "GREEN"
+
+
+STATE_COLORS = {
+    "RED": (0, 0, 255),
+    "AMBER": (0, 165, 255),
+    "GREEN": (0, 255, 0),
+}
+
+STATE_LABELS = {
+    "RED": "NO FLOW",
+    "AMBER": "RINSE (<=10 GPM)",
+    "GREEN": "ONLINE (>10 GPM)",
+}
+
+
+def draw_overlay(frame, results, flow_rate, position_ratio, traffic_state):
     """Draw bounding boxes and flow info on the frame for optional display."""
     annotated = results[0].plot()
 
     if flow_rate is not None:
-        status_text = f"Flow: {flow_rate:.1f} ({position_ratio * 100:.0f}%)"
-        color = (0, 255, 0) if is_flowing else (0, 0, 255)
-        label = "FLOWING" if is_flowing else "ZERO FLOW"
+        status_text = f"Flow: {flow_rate:.1f} GPM ({position_ratio * 100:.0f}%)"
+        color = STATE_COLORS[traffic_state]
+        label = STATE_LABELS[traffic_state]
     else:
         status_text = "Flow: NO DETECTION"
         color = (0, 0, 255)
@@ -154,6 +189,8 @@ def main():
                         help="Max flow rate on rotameter scale")
     parser.add_argument("--threshold", type=float, default=ZERO_FLOW_THRESHOLD,
                         help="Position ratio below which flow is considered zero")
+    parser.add_argument("--rinse-gpm", type=float, default=RINSE_GPM,
+                        help="GPM threshold for rinse/amber (default: 10)")
     parser.add_argument("--display", action="store_true",
                         help="Show live camera feed with overlay (requires monitor)")
     parser.add_argument("--resolution", default="640x480",
@@ -175,7 +212,7 @@ def main():
 
     # Setup GPIO
     setup_gpio()
-    print(f"  [OK] GPIO ready (Green=GPIO{GREEN_LED_PIN}, Red=GPIO{RED_LED_PIN})")
+    print(f"  [OK] GPIO ready (Green=GPIO{GREEN_LED_PIN}, Amber=GPIO{AMBER_LED_PIN}, Red=GPIO{RED_LED_PIN})")
 
     # Setup camera
     camera = setup_camera(resolution=res)
@@ -190,16 +227,16 @@ def main():
             flow_rate, position_ratio = calculate_flow(results, args.max_flow)
 
             if flow_rate is not None:
-                is_flowing = position_ratio > args.threshold
-                set_traffic_light(flow_on=is_flowing)
-                status = "FLOWING (GREEN)" if is_flowing else "ZERO FLOW (RED)"
+                traffic_state = get_traffic_state(flow_rate)
+                set_traffic_light(traffic_state)
+                status = f"{STATE_LABELS[traffic_state]} ({traffic_state})"
                 print(
-                    f"\r  Flow: {flow_rate:6.1f} / {args.max_flow:.0f} "
+                    f"\r  Flow: {flow_rate:6.1f} / {args.max_flow:.0f} GPM "
                     f"({position_ratio * 100:5.1f}%) | {status}       ",
                     end="", flush=True,
                 )
             else:
-                set_traffic_light(flow_on=False)
+                set_traffic_light("RED")
                 print(
                     "\r  Flow: ------- (no detection) | NO DETECTION (RED)       ",
                     end="", flush=True,
@@ -207,9 +244,10 @@ def main():
 
             # Optional live display
             if args.display:
+                traffic_state = get_traffic_state(flow_rate) if flow_rate else "RED"
                 overlay = draw_overlay(
                     frame, results, flow_rate, position_ratio,
-                    is_flowing=(position_ratio or 0) > args.threshold,
+                    traffic_state,
                 )
                 cv2.imshow("Rotameter Reader", overlay)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -220,7 +258,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\n  Shutting down...")
     finally:
-        set_traffic_light(flow_on=False)
+        set_traffic_light("RED")
         GPIO.cleanup()
         camera.stop()
         if args.display:
