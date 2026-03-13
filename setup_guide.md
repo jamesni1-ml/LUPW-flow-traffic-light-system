@@ -4,13 +4,16 @@
 
 | Component | Quantity | Notes |
 |---|---|---|
-| Raspberry Pi 4 (2GB+ RAM) | 1 | 4GB recommended for YOLOv8 |
+| Raspberry Pi 4 (2GB+ RAM) | 1 | 4GB recommended |
 | Raspberry Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
-| Red LED (5mm or traffic light module) | 1 | Standard through-hole LED |
-| Green LED (5mm or traffic light module) | 1 | Standard through-hole LED |
-| 330Ω resistor | 2 | Current limiting for LEDs |
-| Breadboard | 1 | For prototyping |
-| Jumper wires (M-F) | 4+ | GPIO to breadboard |
+| Red LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2V forward voltage |
+| Green LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2.2V forward voltage |
+| 150Ω resistor | 2 | Current limiting for LEDs (see calculation below) |
+| 2N2222 NPN transistor | 2 | To drive LEDs over 5m cable (recommended) |
+| 1kΩ resistor | 2 | Base resistor for transistors |
+| 2-core cable (0.75mm²) | ~12m | 2×5m runs + spare (e.g. speaker wire or bell wire) |
+| Breadboard or strip board | 1 | For Pi-side circuit |
+| Screw terminal block | 1 | To connect cables cleanly |
 | MicroSD card (32GB+) | 1 | With Raspberry Pi OS |
 | USB-C power supply (5V 3A) | 1 | Official Pi 4 PSU recommended |
 
@@ -38,32 +41,94 @@ Raspberry Pi 4 GPIO Header (BCM numbering)
       ...
 ```
 
-### Wiring Connections
+### Important: 5-Metre Cable Run
 
-**Green LED (flow ON indicator):**
+The LEDs are mounted **~5 metres away** from the Raspberry Pi (Pi + camera sit at the rotameter, LEDs are visible from a distance). Over 5m of cable, the Pi's 3.3V GPIO cannot reliably drive LEDs directly due to voltage drop. **Use the transistor driver circuit below.**
+
+### Recommended Wiring: Transistor Driver (5m cable)
+
+Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rail**, which has more headroom for the voltage drop over 5m.
+
+**Circuit at the Pi (for EACH LED — repeat for green and red):**
+
 ```
-  GPIO 17 (Pin 11) ──►──[ 330Ω Resistor ]──►──[ Green LED + (long leg) ]
-                                                [ Green LED - (short leg) ]──►── GND (Pin 9)
+                        Pi 5V (Pin 2 or 4)
+                            │
+                     ┌──────┘
+                     │
+              ───── 5m cable (wire 1) ─────►── [ 150Ω Resistor ] ──►── LED (+) anode
+              │                                                         │
+              │                                                      LED (-) cathode
+              │                                                         │
+              ───── 5m cable (wire 2) ─────►────────────────────────────┘
+              │                                          (return to Pi)
+              │
+         ┌────┘
+         │
+    Collector (C)
+         │
+    [2N2222 NPN]
+         │
+    Emitter (E) ──►── GND (Pin 6, 9, 14, 20, 25, etc.)
+         │
+    Base (B) ──[ 1kΩ ]──►── GPIO pin
 ```
 
-**Red LED (flow OFF / zero flow indicator):**
+**Green LED:**
 ```
-  GPIO 27 (Pin 13) ──►──[ 330Ω Resistor ]──►──[ Red LED + (long leg) ]
-                                                [ Red LED - (short leg) ]──►── GND (Pin 14)
+  GPIO 17 (Pin 11) ──[ 1kΩ ]──► 2N2222 Base
+                                 Emitter → GND (Pin 9)
+                                 Collector → 5m cable → 150Ω → Green LED → 5m return cable → GND
+  Pi 5V (Pin 2) ─────────────→ 5m cable (power wire)
 ```
+
+**Red LED:**
+```
+  GPIO 27 (Pin 13) ──[ 1kΩ ]──► 2N2222 Base
+                                 Emitter → GND (Pin 14)
+                                 Collector → 5m cable → 150Ω → Red LED → 5m return cable → GND
+  Pi 5V (Pin 4) ──────────────→ 5m cable (power wire)
+```
+
+### Resistor Calculation
+
+```
+Vsupply = 5V (Pi 5V rail)
+Vdrop_cable ≈ 0.7V (10m round trip of 0.75mm² copper at 15mA)
+Vdrop_transistor ≈ 0.2V (2N2222 Vce_sat)
+Vled ≈ 2.0V (red) / 2.2V (green)
+I_led = 15mA (bright enough for indicator)
+
+R = (5V - 0.7V - 0.2V - 2.0V) / 0.015A = 140Ω → use 150Ω standard value
+For green: (5V - 0.7V - 0.2V - 2.2V) / 0.015A = 127Ω → 150Ω is fine (slightly dimmer)
+```
+
+### Alternative: Direct GPIO (short cable only)
+
+If you later move the LEDs closer to the Pi (< 0.5m), you can skip the transistors:
+```
+  GPIO 17 (Pin 11) ── [ 150Ω ] ── Green LED (+) ── GND (Pin 9)
+  GPIO 27 (Pin 13) ── [ 150Ω ] ── Red LED (+)   ── GND (Pin 14)
+```
+⚠️ This will NOT work reliably over 5m cable.
 
 ### Wiring Summary Table
 
-| Signal | BCM GPIO | Physical Pin | Connects To |
-|---|---|---|---|
-| Green LED | GPIO 17 | Pin 11 | 330Ω → Green LED anode → GND |
-| Red LED | GPIO 27 | Pin 13 | 330Ω → Red LED anode → GND |
-| Ground (Green) | — | Pin 9 | Green LED cathode |
-| Ground (Red) | — | Pin 14 | Red LED cathode |
+| Signal | BCM GPIO | Physical Pin | Pi-Side Component | Cable | LED-Side |
+|---|---|---|---|---|---|
+| Green LED | GPIO 17 | Pin 11 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Green LED → return |
+| Red LED | GPIO 27 | Pin 13 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Red LED → return |
+| 5V Power | — | Pin 2 + Pin 4 | Transistor collector | Via cable | Powers LEDs |
+| Ground | — | Pin 9 + Pin 14 | Transistor emitter | Via return cable | LED cathode |
 
-> **Note:** If using a traffic light LED module (3-in-1 tower), it typically has GND, R, Y, G pins.
-> Connect R → GPIO 27, G → GPIO 17, GND → any Pi GND pin.
-> The module usually has built-in resistors — check its datasheet.
+### Cable Tips for 5m Run
+
+- Use **0.75mm² 2-core cable** (speaker wire, bell wire, or alarm cable all work)
+- Each LED needs its own 2-core run: one wire for +5V, one for GND return
+- That's **2 cables × 5m = 10m total cable** (plus spare)
+- Solder connections at the LED end, or use screw terminals
+- Keep the cable away from mains/high-voltage wiring to avoid interference
+- Label your cables (green/red) at both ends
 
 ---
 
@@ -239,3 +304,29 @@ sudo systemctl status lupw-flow.service
 - Ensure **consistent lighting** — avoid direct sunlight causing reflections on the glass tube
 - Keep the camera at a fixed distance matching your training images (~15-30cm typical)
 - Use a 3D-printed or simple bracket to hold the camera steady
+
+---
+
+## Shopping List Summary
+
+For quick reference, here's everything you need to buy:
+
+**Electronics (Pi side):**
+- [ ] 2× 2N2222 NPN transistor (~£0.10 each)
+- [ ] 2× 1kΩ resistor (1/4W, for transistor bases)
+- [ ] 1× breadboard or strip board
+- [ ] Jumper wires
+
+**LED side (5m away):**
+- [ ] 1× 5mm red LED
+- [ ] 1× 5mm green LED
+- [ ] 2× 150Ω resistor (1/4W, current limiting)
+
+**Cable:**
+- [ ] ~12m of 2-core 0.75mm² cable (e.g., speaker wire) — 2 runs of 5m + spare
+
+**Already needed:**
+- [ ] Raspberry Pi 4 (4GB)
+- [ ] Pi Camera Module 2
+- [ ] MicroSD card (32GB+)
+- [ ] USB-C 5V 3A power supply
