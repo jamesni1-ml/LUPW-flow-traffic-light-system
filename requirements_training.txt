@@ -1,8 +1,14 @@
-# Training dependencies (run on your training machine, not the Pi)
+# Training dependencies — use with: conda activate vision-ml
+# All packages below are already installed in the vision-ml environment
 ultralytics>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+albumentations>=1.0.0
 opencv-python>=4.8.0
 matplotlib>=3.7.0
+seaborn>=0.12.0
 numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.2.0
 Pillow>=10.0.0
-jupyter>=1.0.0
-ipywidgets>=8.0.0
+PyYAML>=6.0

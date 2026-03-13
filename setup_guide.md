@@ -1,4 +1,4 @@
-# Hardware Setup Guide — LUPW Flow Traffic Light System
+# Hardware Setup Guide — LUPW Flow Traffic Light System (v3)
 
 ## Components Required
 
@@ -6,16 +6,27 @@
 |---|---|---|
 | Raspberry Pi 4 (2GB+ RAM) | 1 | 4GB recommended |
 | Raspberry Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
-| Red LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2V forward voltage |
-| Green LED (5mm, standard) | 1 | Through-hole, ~20mA, ~2.2V forward voltage |
-| 150Ω resistor | 2 | Current limiting for LEDs (see calculation below) |
-| 2N2222 NPN transistor | 2 | To drive LEDs over 5m cable (recommended) |
-| 1kΩ resistor | 2 | Base resistor for transistors |
-| 2-core cable (0.75mm²) | ~12m | 2×5m runs + spare (e.g. speaker wire or bell wire) |
+| Red LED (5mm, standard) | 1 | ~20mA, ~2V forward voltage |
+| Amber/Yellow LED (5mm, standard) | 1 | ~20mA, ~2.1V forward voltage |
+| Green LED (5mm, standard) | 1 | ~20mA, ~2.2V forward voltage |
+| 150Ω resistor | 3 | Current limiting for LEDs (see calculation below) |
+| 2N2222 NPN transistor | 3 | To drive LEDs over 5m cable |
+| 1kΩ resistor | 3 | Base resistor for transistors |
+| 2-core cable (0.75mm²) | ~18m | 3×5m runs + spare (e.g. speaker wire or bell wire) |
 | Breadboard or strip board | 1 | For Pi-side circuit |
 | Screw terminal block | 1 | To connect cables cleanly |
 | MicroSD card (32GB+) | 1 | With Raspberry Pi OS |
 | USB-C power supply (5V 3A) | 1 | Official Pi 4 PSU recommended |
+
+---
+
+## Traffic Light States
+
+| State | Condition | LED | GPIO Pin |
+|---|---|---|---|
+| **RED** | No flow (0 GPM) | Red on, others off | GPIO 27 (Pin 13) |
+| **AMBER** | Rinse flow (≤10 GPM) | Amber on, others off | GPIO 22 (Pin 15) |
+| **GREEN** | Online flow (>10 GPM) | Green on, others off | GPIO 17 (Pin 11) |
 
 ---
 
@@ -32,7 +43,7 @@ Raspberry Pi 4 GPIO Header (BCM numbering)
         GND  (9) (10) GPIO15
  ►  GPIO17 (11) (12) GPIO18        ◄── GREEN LED pin (BCM 17)
  ►  GPIO27 (13) (14) GND           ◄── RED LED pin (BCM 27)
-      GPIO22 (15) (16) GPIO23
+ ►  GPIO22 (15) (16) GPIO23        ◄── AMBER LED pin (BCM 22)
         3V3 (17) (18) GPIO24
       GPIO10 (19) (20) GND
       GPIO9  (21) (22) GPIO25
@@ -49,7 +60,7 @@ The LEDs are mounted **~5 metres away** from the Raspberry Pi (Pi + camera sit a
 
 Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rail**, which has more headroom for the voltage drop over 5m.
 
-**Circuit at the Pi (for EACH LED — repeat for green and red):**
+**Circuit at the Pi (for EACH LED — repeat for green, amber, and red):**
 
 ```
                         Pi 5V (Pin 2 or 4)
@@ -69,7 +80,7 @@ Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rai
          │
     [2N2222 NPN]
          │
-    Emitter (E) ──►── GND (Pin 6, 9, 14, 20, 25, etc.)
+    Emitter (E) ──►── GND
          │
     Base (B) ──[ 1kΩ ]──►── GPIO pin
 ```
@@ -78,15 +89,23 @@ Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rai
 ```
   GPIO 17 (Pin 11) ──[ 1kΩ ]──► 2N2222 Base
                                  Emitter → GND (Pin 9)
-                                 Collector → 5m cable → 150Ω → Green LED → 5m return cable → GND
-  Pi 5V (Pin 2) ─────────────→ 5m cable (power wire)
+                                 Collector → 5m cable → 150Ω → Green LED → 5m return → GND
+  Pi 5V (Pin 2) ──────────────→ 5m cable (power wire)
+```
+
+**Amber LED:**
+```
+  GPIO 22 (Pin 15) ──[ 1kΩ ]──► 2N2222 Base
+                                 Emitter → GND (Pin 20)
+                                 Collector → 5m cable → 150Ω → Amber LED → 5m return → GND
+  Pi 5V (Pin 2) ──────────────→ 5m cable (power wire)
 ```
 
 **Red LED:**
 ```
   GPIO 27 (Pin 13) ──[ 1kΩ ]──► 2N2222 Base
                                  Emitter → GND (Pin 14)
-                                 Collector → 5m cable → 150Ω → Red LED → 5m return cable → GND
+                                 Collector → 5m cable → 150Ω → Red LED → 5m return → GND
   Pi 5V (Pin 4) ──────────────→ 5m cable (power wire)
 ```
 
@@ -96,19 +115,21 @@ Each LED is driven by an **NPN transistor (2N2222)** switching the Pi's **5V rai
 Vsupply = 5V (Pi 5V rail)
 Vdrop_cable ≈ 0.7V (10m round trip of 0.75mm² copper at 15mA)
 Vdrop_transistor ≈ 0.2V (2N2222 Vce_sat)
-Vled ≈ 2.0V (red) / 2.2V (green)
+Vled ≈ 2.0V (red) / 2.1V (amber) / 2.2V (green)
 I_led = 15mA (bright enough for indicator)
 
-R = (5V - 0.7V - 0.2V - 2.0V) / 0.015A = 140Ω → use 150Ω standard value
-For green: (5V - 0.7V - 0.2V - 2.2V) / 0.015A = 127Ω → 150Ω is fine (slightly dimmer)
+Red:   R = (5V - 0.7V - 0.2V - 2.0V) / 0.015A = 140Ω → use 150Ω standard
+Amber: R = (5V - 0.7V - 0.2V - 2.1V) / 0.015A = 133Ω → use 150Ω (fine)
+Green: R = (5V - 0.7V - 0.2V - 2.2V) / 0.015A = 127Ω → use 150Ω (slightly dimmer)
 ```
 
 ### Alternative: Direct GPIO (short cable only)
 
 If you later move the LEDs closer to the Pi (< 0.5m), you can skip the transistors:
 ```
-  GPIO 17 (Pin 11) ── [ 150Ω ] ── Green LED (+) ── GND (Pin 9)
-  GPIO 27 (Pin 13) ── [ 150Ω ] ── Red LED (+)   ── GND (Pin 14)
+  GPIO 17 (Pin 11) ── [ 150Ω ] ── Green LED (+)  ── GND (Pin 9)
+  GPIO 22 (Pin 15) ── [ 150Ω ] ── Amber LED (+)  ── GND (Pin 20)
+  GPIO 27 (Pin 13) ── [ 150Ω ] ── Red LED (+)    ── GND (Pin 14)
 ```
 ⚠️ This will NOT work reliably over 5m cable.
 
@@ -117,18 +138,19 @@ If you later move the LEDs closer to the Pi (< 0.5m), you can skip the transisto
 | Signal | BCM GPIO | Physical Pin | Pi-Side Component | Cable | LED-Side |
 |---|---|---|---|---|---|
 | Green LED | GPIO 17 | Pin 11 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Green LED → return |
+| Amber LED | GPIO 22 | Pin 15 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Amber LED → return |
 | Red LED | GPIO 27 | Pin 13 | 1kΩ → 2N2222 base | 5m 2-core | 150Ω → Red LED → return |
 | 5V Power | — | Pin 2 + Pin 4 | Transistor collector | Via cable | Powers LEDs |
-| Ground | — | Pin 9 + Pin 14 | Transistor emitter | Via return cable | LED cathode |
+| Ground | — | Pin 9, 14, 20 | Transistor emitter | Via return cable | LED cathode |
 
 ### Cable Tips for 5m Run
 
 - Use **0.75mm² 2-core cable** (speaker wire, bell wire, or alarm cable all work)
 - Each LED needs its own 2-core run: one wire for +5V, one for GND return
-- That's **2 cables × 5m = 10m total cable** (plus spare)
+- That's **3 cables × 5m = 15m total cable** (plus spare)
 - Solder connections at the LED end, or use screw terminals
 - Keep the cable away from mains/high-voltage wiring to avoid interference
-- Label your cables (green/red) at both ends
+- Label your cables (green/amber/red) at both ends
 
 ---
 
@@ -210,10 +232,10 @@ pip install -r requirements_pi.txt
 
 ### 4. Transfer the Trained Model
 
-After training on your PC/workstation, copy `best.pt` to the Pi:
+After training on your WSL2 workstation (vision-ml environment), copy `best.pt` to the Pi:
 ```bash
 # From your training machine:
-scp runs/detect/rotameter_model/weights/best.pt pi@<PI_IP_ADDRESS>:~/lupw-project/best.pt
+scp runs/detect/rotameter/weights/best.pt pi@<PI_IP_ADDRESS>:~/lupw-project/best.pt
 
 # Or use a USB drive
 ```
@@ -226,12 +248,12 @@ scp runs/detect/rotameter_model/weights/best.pt pi@<PI_IP_ADDRESS>:~/lupw-projec
 ```bash
 cd ~/lupw-project
 source ~/lupw-env/bin/activate
-python3 inference.py --model best.pt --max-flow 100
+python3 inference.py --model best.pt --max-flow 100 --rinse-gpm 10
 ```
 
 ### With Live Display (requires monitor/VNC)
 ```bash
-python3 inference.py --model best.pt --max-flow 100 --display
+python3 inference.py --model best.pt --max-flow 100 --rinse-gpm 10 --display
 ```
 
 ### All Options
@@ -239,9 +261,12 @@ python3 inference.py --model best.pt --max-flow 100 --display
 python3 inference.py \
     --model best.pt \
     --max-flow 100 \
-    --threshold 0.05 \
+    --rinse-gpm 10 \
+    --threshold 0.02 \
+    --confidence 0.5 \
     --resolution 640x480 \
     --interval 0.5 \
+    --log flow_log.csv \
     --display
 ```
 
@@ -249,9 +274,12 @@ python3 inference.py \
 |---|---|---|
 | `--model` | `best.pt` | Path to trained YOLOv8 model weights |
 | `--max-flow` | `100.0` | Maximum flow reading on your rotameter scale |
-| `--threshold` | `0.05` | Position ratio below which flow = zero (0.05 = 5%) |
+| `--rinse-gpm` | `10.0` | Rinse/online threshold in GPM |
+| `--threshold` | `0.02` | Position ratio below which flow = zero (2%) |
+| `--confidence` | `0.5` | Minimum YOLOv8 detection confidence |
 | `--resolution` | `640x480` | Camera capture resolution |
 | `--interval` | `0.5` | Seconds between each reading |
+| `--log` | `flow_log.csv` | CSV log file for all readings |
 | `--display` | off | Show live annotated camera feed |
 
 ### Run on Boot (systemd service)
@@ -267,7 +295,7 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/lupw-project
 Environment="PATH=/home/pi/lupw-env/bin:/usr/bin"
-ExecStart=/home/pi/lupw-env/bin/python3 inference.py --model best.pt --max-flow 100
+ExecStart=/home/pi/lupw-env/bin/python3 inference.py --model best.pt --max-flow 100 --rinse-gpm 10
 Restart=on-failure
 RestartSec=10
 
@@ -291,42 +319,11 @@ sudo systemctl status lupw-flow.service
 | Issue | Solution |
 |---|---|
 | Camera not detected | Check ribbon cable orientation and seating. Run `libcamera-hello` to test. |
-| LEDs not lighting up | Verify polarity (long leg = anode = +). Check resistor connections. Test with `gpio -g write 17 1`. |
-| Model runs slowly | Use 640x480 resolution. Consider exporting to NCNN format for faster Pi inference. |
+| LEDs not lighting up | Verify polarity (long leg = anode = +). Check transistor wiring. Test with `python3 test_gpio.py`. |
+| Only 2 LEDs work | Check the third transistor base resistor and GPIO pin connection. |
+| Model runs slowly | Use 640x480 resolution. Consider exporting to TorchScript for faster inference. |
 | "No detection" in output | Ensure camera is pointed at the rotameter. Check lighting conditions. May need more training data. |
 | GPIO permission error | Run with `sudo` or add user to gpio group: `sudo usermod -aG gpio $USER` |
+| Wrong light colour | Check `--rinse-gpm` threshold. Run `test_gpio.py` to verify which GPIO controls which LED. |
 
 ---
-
-## Camera Mounting Tips
-
-- Mount the camera **directly facing** the rotameter tube, perpendicular to the scale
-- Ensure **consistent lighting** — avoid direct sunlight causing reflections on the glass tube
-- Keep the camera at a fixed distance matching your training images (~15-30cm typical)
-- Use a 3D-printed or simple bracket to hold the camera steady
-
----
-
-## Shopping List Summary
-
-For quick reference, here's everything you need to buy:
-
-**Electronics (Pi side):**
-- [ ] 2× 2N2222 NPN transistor (~£0.10 each)
-- [ ] 2× 1kΩ resistor (1/4W, for transistor bases)
-- [ ] 1× breadboard or strip board
-- [ ] Jumper wires
-
-**LED side (5m away):**
-- [ ] 1× 5mm red LED
-- [ ] 1× 5mm green LED
-- [ ] 2× 150Ω resistor (1/4W, current limiting)
-
-**Cable:**
-- [ ] ~12m of 2-core 0.75mm² cable (e.g., speaker wire) — 2 runs of 5m + spare
-
-**Already needed:**
-- [ ] Raspberry Pi 4 (4GB)
-- [ ] Pi Camera Module 2
-- [ ] MicroSD card (32GB+)
-- [ ] USB-C 5V 3A power supply
