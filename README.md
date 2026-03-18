@@ -31,6 +31,8 @@ A computer vision system that reads **rotameter flow meters** in real-time using
 LUPW-flow-traffic-light-system/
 ├── training_notebook.ipynb    # YOLOv8 training pipeline (25 cells)
 ├── inference.py               # Pi inference script (3-state traffic light)
+├── record_video.py            # Pi data collection — continuous video recording
+├── extract_frames.py          # Workstation — extract frames from video for annotation
 ├── setup_guide.md             # Hardware wiring & Pi setup guide
 ├── requirements_training.txt  # Training machine dependencies (vision-ml)
 ├── requirements_pi.txt        # Raspberry Pi dependencies
@@ -47,7 +49,7 @@ LUPW-flow-traffic-light-system/
 
 1. **Camera** captures frames of the rotameter at 640×480
 2. **YOLOv8 Nano** detects two objects: the **tube** (rotameter body) and the **float** (ball/bobbin)
-3. **Flow calculation** — the float's vertical position within the tube determines flow rate:
+3. **Flow calculation** — the top edge of the float's bounding box within the tube determines flow rate:
    - Float at bottom = 0% = no flow
    - Float at top = 100% = max flow
 4. **3-state traffic light** with debounce (3 consecutive readings required):
