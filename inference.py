@@ -143,14 +143,14 @@ def calculate_flow(results, max_flow_rate, conf_threshold):
 
     tube_top = tube_xyxy[1]     # y_min of tube
     tube_bottom = tube_xyxy[3]  # y_max of tube
-    float_center_y = (float_xyxy[1] + float_xyxy[3]) / 2.0
+    float_top_y = float_xyxy[1]  # Top edge of float = reading point
 
     tube_height = tube_bottom - tube_top
     if tube_height <= 0:
         return None, None
 
     # Higher in image = smaller y value = more flow
-    position_ratio = (tube_bottom - float_center_y) / tube_height
+    position_ratio = (tube_bottom - float_top_y) / tube_height
     position_ratio = max(0.0, min(1.0, position_ratio))
 
     flow_rate = position_ratio * max_flow_rate
