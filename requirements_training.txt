@@ -1,14 +1,23 @@
-# Training dependencies — use with: conda activate vision-ml
-# All packages below are already installed in the vision-ml environment
-ultralytics>=8.0.0
+# ── Training Dependencies (WSL2 / vision-ml conda environment) ──
+# All packages below are already installed in vision-ml — no pip install needed
+# Run: conda activate vision-ml
+
+# ── Core ML Framework ───────────────────────────────────────────
 torch>=2.0.0
 torchvision>=0.15.0
+ultralytics>=8.0.0
+
+# ── Data Augmentation & Processing ──────────────────────────────
 albumentations>=1.0.0
 opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# ── Analysis & Visualisation ────────────────────────────────────
 matplotlib>=3.7.0
 seaborn>=0.12.0
-numpy>=1.24.0
 pandas>=2.0.0
 scikit-learn>=1.2.0
-Pillow>=10.0.0
+
+# ── Configuration ───────────────────────────────────────────────
 PyYAML>=6.0
