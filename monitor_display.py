@@ -10,7 +10,7 @@ the state on-screen instead of driving physical LEDs.
 
 Display shows:
   - Large colour indicator matching the traffic light state
-  - Flow position percentage
+  - Estimated flow rate in GPM (interpolated from calibration points)
   - State label:
       GREEN  → "ONLINE"
       BLUE   → "UPW RINSE (25 GPM)"
@@ -41,6 +41,7 @@ from picamera2 import Picamera2
 ZERO_POS = 0.05
 RINSE1_POS = 0.22
 RINSE2_POS = 0.45
+MAX_FLOW = 100.0  # Max GPM on your rotameter scale
 
 # ── Model Configuration ─────────────────────────────────────────────
 MODEL_PATH = "best.pt"
@@ -94,6 +95,33 @@ def setup_camera(resolution=(640, 480)):
     return picam2
 
 
+def estimate_gpm(position_ratio, zero_pos, rinse1_pos, rinse2_pos, max_flow):
+    """
+    Estimate GPM from position ratio using piecewise linear interpolation
+    between calibration points.
+
+    Calibration points:
+      zero_pos   → 0 GPM
+      rinse1_pos → 10 GPM
+      rinse2_pos → 25 GPM
+      1.0        → max_flow GPM
+    """
+    if position_ratio <= zero_pos:
+        return 0.0
+    elif position_ratio <= rinse1_pos:
+        # Interpolate 0 → 10 GPM
+        t = (position_ratio - zero_pos) / (rinse1_pos - zero_pos)
+        return t * 10.0
+    elif position_ratio <= rinse2_pos:
+        # Interpolate 10 → 25 GPM
+        t = (position_ratio - rinse1_pos) / (rinse2_pos - rinse1_pos)
+        return 10.0 + t * 15.0
+    else:
+        # Interpolate 25 → max_flow GPM
+        t = (position_ratio - rinse2_pos) / (1.0 - rinse2_pos)
+        return 25.0 + t * (max_flow - 25.0)
+
+
 def get_traffic_state(position_ratio, zero_pos, rinse1_pos, rinse2_pos):
     """Determine traffic light state from float position ratio."""
     if position_ratio <= zero_pos:
@@ -141,7 +169,8 @@ def calculate_position(results, conf_threshold):
     return max(0.0, min(1.0, position_ratio))
 
 
-def draw_display(frame, results, position_ratio, state, display_size):
+def draw_display(frame, results, position_ratio, state, display_size,
+                 gpm_estimate=None):
     """
     Build the fullscreen monitor display.
 
@@ -150,7 +179,7 @@ def draw_display(frame, results, position_ratio, state, display_size):
       │                                     │
       │         STATE LABEL (large)         │
       │                                     │
-      │       Position: XX.X%               │
+      │          XX.X GPM                   │
       │                                     │
       │   ┌──────────┐                      │
       │   │  camera   │                     │
@@ -177,9 +206,9 @@ def draw_display(frame, results, position_ratio, state, display_size):
     cv2.putText(display, label, (label_x, label_y),
                 font, label_scale, text_colour, label_thickness, cv2.LINE_AA)
 
-    # ── Position percentage ─────────────────────────────────────────
-    if position_ratio is not None:
-        pos_text = f"Position: {position_ratio * 100:.1f}%"
+    # ── Flow rate (GPM) ─────────────────────────────────────────────
+    if position_ratio is not None and gpm_estimate is not None:
+        pos_text = f"{gpm_estimate:.1f} GPM"
     else:
         pos_text = "NO DETECTION"
     pos_scale = 1.5
@@ -232,6 +261,8 @@ def main():
                         help="Position ratio for rinse 1 / AMBER (default: 0.22)")
     parser.add_argument("--rinse2-pos", type=float, default=RINSE2_POS,
                         help="Position ratio for rinse 2 / BLUE (default: 0.45)")
+    parser.add_argument("--max-flow", type=float, default=MAX_FLOW,
+                        help="Max flow on your rotameter scale in GPM (default: 100)")
     parser.add_argument("--confidence", type=float, default=CONFIDENCE_THRESHOLD,
                         help="Minimum detection confidence (default: 0.5)")
     parser.add_argument("--resolution", default="640x480",
@@ -268,6 +299,7 @@ def main():
           f"{' (fullscreen)' if args.fullscreen else ''}")
     print(f"  [OK] Thresholds: zero={args.zero_pos:.2f}, "
           f"rinse1={args.rinse1_pos:.2f}, rinse2={args.rinse2_pos:.2f}")
+    print(f"  [OK] Max flow: {args.max_flow:.0f} GPM")
 
     # Create display window
     window_name = "LUPW Flow Monitor"
@@ -297,12 +329,17 @@ def main():
                 state = get_traffic_state(
                     position_ratio or 0.0,
                     args.zero_pos, args.rinse1_pos, args.rinse2_pos)
+                gpm = estimate_gpm(
+                    position_ratio or 0.0,
+                    args.zero_pos, args.rinse1_pos, args.rinse2_pos,
+                    args.max_flow)
                 display = draw_display(
-                    frame, results, position_ratio, state, disp_res)
+                    frame, results, position_ratio, state, disp_res,
+                    gpm_estimate=gpm)
 
                 if position_ratio is not None:
                     # Add calibration overlay
-                    cal_text = f"CALIBRATION  |  Position: {position_ratio:.4f} ({position_ratio * 100:.1f}%)"
+                    cal_text = f"CALIBRATION  |  Position: {position_ratio:.4f} ({position_ratio * 100:.1f}%)  |  ~{gpm:.1f} GPM"
                     cv2.putText(display, cal_text, (20, disp_res[1] - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                                 (255, 255, 255), 2, cv2.LINE_AA)
@@ -336,7 +373,7 @@ def main():
     # CSV logging
     log_file = open(args.log, "w", newline="")
     log_writer = csv.writer(log_file)
-    log_writer.writerow(["timestamp", "position_pct", "state"])
+    log_writer.writerow(["timestamp", "gpm", "state"])
 
     try:
         while True:
@@ -348,6 +385,10 @@ def main():
                 new_state = get_traffic_state(
                     position_ratio, args.zero_pos,
                     args.rinse1_pos, args.rinse2_pos)
+                gpm = estimate_gpm(
+                    position_ratio, args.zero_pos,
+                    args.rinse1_pos, args.rinse2_pos,
+                    args.max_flow)
 
                 # Debounce
                 if new_state == pending_state:
@@ -363,12 +404,12 @@ def main():
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log_writer.writerow([
                     now,
-                    f"{position_ratio * 100:.1f}",
+                    f"{gpm:.1f}",
                     current_state,
                 ])
 
                 print(
-                    f"\r  Position: {position_ratio * 100:5.1f}% | {current_state:6s}",
+                    f"\r  {gpm:5.1f} GPM | {current_state:6s}",
                     end="", flush=True)
             else:
                 print("\r  NO DETECTION                         ",
@@ -376,7 +417,8 @@ def main():
 
             # Draw and show display
             display = draw_display(
-                frame, results, position_ratio, current_state, disp_res)
+                frame, results, position_ratio, current_state, disp_res,
+                gpm_estimate=gpm if position_ratio is not None else None)
             cv2.imshow(window_name, display)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break

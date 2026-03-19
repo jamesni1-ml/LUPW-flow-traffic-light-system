@@ -122,11 +122,11 @@ See the full **[Data Labeling Guide](#data-labeling-guide)** below for detailed 
 
 **Collect images** using the Pi camera:
 ```bash
-# On the Pi — record video at various flow levels
-python3 record_video.py --output rotameter_video.h264 --duration 300
+# On the Pi — record video at various flow levels (saves as recording_YYYYMMDD_HHMMSS.h264)
+python3 record_video.py --duration 300
 
 # On your workstation — extract frames (1 per second by default)
-python3 extract_frames.py --input rotameter_video.h264 --output dataset/raw_frames/
+python3 extract_frames.py recording_20260318_140000.h264 --output-dir dataset/raw_frames/
 ```
 
 Alternatively, photograph the rotameter manually at various flow levels.
@@ -223,7 +223,7 @@ If wiring LEDs and transistor circuits is impractical, use `monitor_display.py` 
 
 The entire screen fills with the traffic light colour, plus:
 - **State label** in large text
-- **Position percentage** reading
+- **Estimated flow rate in GPM** (interpolated from calibration points)
 - **Live camera feed** inset at the bottom
 
 | State | Screen Colour | Label |
@@ -237,10 +237,10 @@ The entire screen fills with the traffic light colour, plus:
 
 ```bash
 # Basic (windowed)
-python3 monitor_display.py --model best.pt --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+python3 monitor_display.py --model best.pt --max-flow 100 --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
 
 # Fullscreen
-python3 monitor_display.py --model best.pt --fullscreen --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+python3 monitor_display.py --model best.pt --fullscreen --max-flow 100 --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
 
 # Calibration mode (shows live position ratio on screen)
 python3 monitor_display.py --model best.pt --calibrate
@@ -263,6 +263,7 @@ python3 monitor_display.py --model best.pt --fullscreen --display-size 1920x1080
 | `--interval` | `0.5` | Seconds between readings |
 | `--log` | `flow_log.csv` | CSV log file |
 | `--calibrate` | off | Calibration mode |
+| `--max-flow` | `100.0` | Max GPM on your rotameter scale (for GPM display) |
 
 ### Requirements
 
@@ -440,7 +441,56 @@ If you skip calibration, these defaults are used:
 | `--zero-pos` | 0.05 | Below 5% = no flow (RED) |
 | `--rinse1-pos` | 0.22 | Below 22% = rinse 1 (AMBER) |
 | `--rinse2-pos` | 0.45 | Below 45% = rinse 2 (BLUE) |
+| `--max-flow` | 100.0 | Max GPM on scale (monitor display only) |
 | Above rinse2 | — | Online (GREEN) |
+
+### What To Change Per Rotameter
+
+You have **two options** — either pass values as command-line arguments (recommended), or edit the defaults in the code.
+
+#### Option 1: Command-Line Arguments (no code changes)
+
+Pass your calibrated values every time you run the script:
+
+```bash
+# GPIO mode
+python3 inference.py --model best.pt \
+    --zero-pos 0.08 --rinse1-pos 0.25 --rinse2-pos 0.50
+
+# Monitor mode (also set --max-flow for your rotameter's max scale reading)
+python3 monitor_display.py --model best.pt --fullscreen \
+    --zero-pos 0.08 --rinse1-pos 0.25 --rinse2-pos 0.50 --max-flow 80
+```
+
+If using systemd (run on boot), put these values in the `ExecStart` line of your service file.
+
+#### Option 2: Edit Default Values in Code
+
+If you only have one rotameter type and don't want to type the arguments each time, change the defaults directly in the script files:
+
+**`inference.py`** — lines 51–53:
+```python
+ZERO_POS = 0.05     # ← Change to your calibrated value
+RINSE1_POS = 0.22   # ← Change to your calibrated value
+RINSE2_POS = 0.45   # ← Change to your calibrated value
+```
+
+**`monitor_display.py`** — lines 41–44:
+```python
+ZERO_POS = 0.05     # ← Change to your calibrated value
+RINSE1_POS = 0.22   # ← Change to your calibrated value
+RINSE2_POS = 0.45   # ← Change to your calibrated value
+MAX_FLOW = 100.0    # ← Change to max GPM on your rotameter scale
+```
+
+### Summary: The 4 Numbers You Need
+
+| Number | What It Is | How To Get It | Used In |
+|---|---|---|---|
+| **zero-pos** | Position ratio where flow = 0 GPM | Run `--calibrate` with no flow, note the ratio | Both scripts |
+| **rinse1-pos** | Position ratio where flow = 10 GPM | Set flow to 10 GPM, note the ratio | Both scripts |
+| **rinse2-pos** | Position ratio where flow = 25 GPM | Set flow to 25 GPM, note the ratio | Both scripts |
+| **max-flow** | Max GPM printed on your rotameter scale | Read the number at the top of the scale | `monitor_display.py` only |
 
 ---
 
@@ -483,7 +533,7 @@ User=pi
 Environment="DISPLAY=:0"
 Environment="PATH=/home/pi/lupw-env/bin:/usr/bin"
 WorkingDirectory=/home/pi/lupw-project
-ExecStart=/home/pi/lupw-env/bin/python3 monitor_display.py --model best.pt --fullscreen --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+ExecStart=/home/pi/lupw-env/bin/python3 monitor_display.py --model best.pt --fullscreen --max-flow 100 --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
 Restart=on-failure
 RestartSec=10
 
