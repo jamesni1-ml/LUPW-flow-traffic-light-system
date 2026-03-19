@@ -269,20 +269,38 @@ This happens on your training machine (Windows or WSL2). You are creating the da
    - Create exactly 2 classes: `tube` and `float`
    - Upload your extracted frames
 
-3. **Label every image with exactly 2 bounding boxes:**
+3. **Label every image with exactly 2 bounding boxes** — one for the tube, one for the float. The float box will be **inside** the tube box. That's normal — they overlap.
 
-   **Tube box:** Draw a tight rectangle around the entire glass/plastic cylinder of the rotameter. Include the dead zones above and below the scale markings. Do NOT include metal fittings, valves, or pipe connections — just the tube.
+   **Box 1 — Tube:** Draw a big rectangle around the entire glass/plastic cylinder. Include dead zones above and below the scale markings. Do NOT include metal fittings, valves, or pipe connections — just the tube itself.
 
-   **Float box:** Draw a tight rectangle around the **float body only**. This is critical: the float often has a thin extension/guide rod sticking up from the top. **Do NOT include the extension in the box.** The model reads position from the top edge of this box, so if you include the extension, the readings will be wrong.
+   **Box 2 — Float:** Draw a smaller rectangle around the **float body only** (the ball or bobbin that moves up and down inside the tube). If the float has a thin extension/guide rod sticking up from the top, **do NOT include the extension**. The code reads position from the top edge of this box — if you include the extension, every reading will be shifted upward and wrong.
 
    ```
-   ✔️ CORRECT float box:        ❌ WRONG (includes extension):
-       │    │                      ┌────┐
-       │    │  ← extension         │ ext│  ← DO NOT include
-       ┌────┐  ← box starts here  │    │
-       │body│                      │body│
-       └────┘                      └────┘
+   ✔️ CORRECT — what your labeled image should look like:
+
+   ┌─────────────────┐  ← TUBE box (big, covers the whole cylinder)
+   │                 │
+   │    ┌───────┐    │
+   │    │ FLOAT │    │  ← FLOAT box (small, around body only)
+   │    │ body  │    │
+   │    └───────┘    │
+   │        │        │  ← extension/guide rod — NOT in the float box
+   │        │        │
+   │                 │
+   └─────────────────┘
+
+   ❌ WRONG — float box includes the extension:
+
+   ┌─────────────────┐
+   │    ┌───────┐    │
+   │    │ ext   │    │  ← DO NOT include this part
+   │    │ FLOAT │    │
+   │    │ body  │    │
+   │    └───────┘    │
+   └─────────────────┘
    ```
+
+   **Why both boxes?** The code calculates: *how far up the tube is the float?* It needs the tube boundaries (top and bottom) and the float position to compute the ratio. Without the tube box, it wouldn't know where the tube starts and ends.
 
 4. **Be consistent.** Draw boxes the same way on every image. Tight boxes, same logic, every time.
 
@@ -612,6 +630,8 @@ Proper annotation is critical for model accuracy. The model detects two classes:
 | **tube** | 0 | The full rotameter tube (glass/plastic cylinder) |
 | **float** | 1 | The float body only (ball or bobbin inside the tube) |
 
+Every image gets **exactly 2 bounding boxes** — one for the tube, one for the float. The float box will be **inside** the tube box. That's expected.
+
 ### Step-by-Step Labeling Instructions
 
 1. **Upload images** to [Roboflow](https://roboflow.com) (free tier works, create a project with 2 classes: `tube`, `float`)
@@ -623,31 +643,45 @@ Proper annotation is critical for model accuracy. The model detects two classes:
    - The box should be consistent across all images — always the full tube
 
 3. **Draw the float bounding box:**
-   - Draw a **tight rectangle** around the **main float body only**
+   - Draw a **tight rectangle** around the **main float body only** (the ball or bobbin that moves up and down)
+   - This box will be **inside** the tube box — that's correct
    - **EXCLUDE the top extension/guide rod** — the float has a thin extension sticking up from the top. Do NOT include this in the box
-   - The reading is taken from the **top edge** of the float body bounding box, so accurate placement here is critical
+   - The code reads position from the **top edge** of the float bounding box, so if you include the extension, every reading will be shifted upward and wrong
    - If the float is partially obscured by glare/reflections, draw the box where you can see it
 
 4. **Label every image** with both `tube` and `float` (every image should have exactly 2 bounding boxes)
 
+**Why both boxes?** The code calculates: *how far up the tube is the float?* It needs the tube boundaries (top and bottom) and the float position to compute the ratio.
+
 ### Annotation Examples
 
 ```
-✔️ CORRECT tube box:           ✔️ CORRECT float box:
-┌───────────┐                  │          │
-│ (dead zone) │                  │ ┌────┐  │
-│ ───────── │                  │ │ body │  │  ← box around body only
-│ │ scale  │ │                  │ └────┘  │
-│ │ area   │ │                  │   │      │  ← extension excluded
-│ ───────── │                  │          │
-│ (dead zone) │
-└───────────┘
+✔️ CORRECT — what your labeled image should look like:
 
-❌ WRONG float box (includes extension):
-┌──────┐
-│  ext  │  ← DO NOT include this
-│ body  │
-└──────┘
+┌─────────────────┐  ← TUBE box (big, covers the whole cylinder)
+│  (dead zone)    │
+│  ─────────────  │
+│  │ scale area │  │
+│  │            │  │
+│  │  ┌──────┐  │  │
+│  │  │FLOAT │  │  │  ← FLOAT box (small, body only, inside tube box)
+│  │  │ body │  │  │
+│  │  └──────┘  │  │
+│  │      │     │  │  ← extension/guide rod — NOT in the float box
+│  │      │     │  │
+│  ─────────────  │
+│  (dead zone)    │
+└─────────────────┘
+
+❌ WRONG — float box includes the extension:
+
+┌─────────────────┐
+│     ┌──────┐    │
+│     │ ext  │    │  ← DO NOT include the extension
+│     │FLOAT │    │
+│     │ body │    │
+│     └──────┘    │
+└─────────────────┘
 ```
 
 ### Tips for Good Annotations
