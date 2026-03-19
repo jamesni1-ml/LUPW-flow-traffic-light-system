@@ -1,6 +1,6 @@
-# LUPW Flow Traffic Light System (v3)
+# LUPW Flow Traffic Light System (v4)
 
-A computer vision system that reads **rotameter flow meters** in real-time using a Raspberry Pi 4 and Camera Module 2, controlling a **3-state traffic light** to indicate flow status.
+A computer vision system that reads **rotameter flow meters** in real-time using a Raspberry Pi 4 and Camera Module 2, controlling a **4-state traffic light** to indicate flow status.
 
 ---
 
@@ -8,20 +8,21 @@ A computer vision system that reads **rotameter flow meters** in real-time using
 
 | | |
 |---|---|
-| **Task** | Detect rotameter tube and float via object detection, calculate flow rate |
+| **Task** | Detect rotameter tube and float via object detection, determine flow state from float position |
 | **Model** | YOLOv8 Nano (fine-tuned on rotameter images) |
 | **Training** | PyTorch 2.6 + Ultralytics on WSL2 (vision-ml conda env, CUDA 12.4) |
 | **Inference** | Ultralytics YOLOv8 on Raspberry Pi 4 |
 | **Camera** | Raspberry Pi Camera Module 2 (12MP) |
-| **Output** | 3-state GPIO traffic light: RED / AMBER / GREEN |
+| **Output** | 4-state GPIO traffic light: RED / AMBER / BLUE / GREEN |
 
 ### Traffic Light States
 
 | State | Condition | GPIO |
 |---|---|---|
-| 🔴 **RED** | No flow (0 GPM) | GPIO 27 (Pin 13) |
-| 🟡 **AMBER** | Rinse flow (≤10 GPM) | GPIO 22 (Pin 15) |
-| 🟢 **GREEN** | Online flow (>10 GPM) | GPIO 17 (Pin 11) |
+| 🔴 **RED** | No flow (position ≤ zero_pos) | GPIO 27 (Pin 13) |
+| 🟡 **AMBER** | Rinse 1 (position ≤ rinse1_pos, ~10 GPM) | GPIO 22 (Pin 15) |
+| 🟦 **BLUE** | Rinse 2 (position ≤ rinse2_pos, ~25 GPM) | GPIO 23 (Pin 16) |
+| 🟢 **GREEN** | Online (position > rinse2_pos) | GPIO 17 (Pin 11) |
 
 ---
 
@@ -30,7 +31,7 @@ A computer vision system that reads **rotameter flow meters** in real-time using
 ```
 LUPW-flow-traffic-light-system/
 ├── training_notebook.ipynb    # YOLOv8 training pipeline (25 cells)
-├── inference.py               # Pi inference script (3-state traffic light)
+├── inference.py               # Pi inference script (4-state traffic light)
 ├── record_video.py            # Pi data collection — continuous video recording
 ├── extract_frames.py          # Workstation — extract frames from video for annotation
 ├── setup_guide.md             # Hardware wiring & Pi setup guide
@@ -49,13 +50,16 @@ LUPW-flow-traffic-light-system/
 
 1. **Camera** captures frames of the rotameter at 640×480
 2. **YOLOv8 Nano** detects two objects: the **tube** (rotameter body) and the **float** (ball/bobbin)
-3. **Flow calculation** — the top edge of the float's bounding box within the tube determines flow rate:
-   - Float at bottom = 0% = no flow
-   - Float at top = 100% = max flow
-4. **3-state traffic light** with debounce (3 consecutive readings required):
-   - **RED** (GPIO 27) → flow = 0 GPM
-   - **AMBER** (GPIO 22) → flow > 0 and ≤ 10 GPM (rinse)
-   - **GREEN** (GPIO 17) → flow > 10 GPM (online)
+3. **Position calculation** — the top edge of the float’s bounding box relative to the tube gives a position ratio (0.0 = bottom, 1.0 = top)
+4. **4-state traffic light** with debounce (3 consecutive readings required):
+   - **RED** (GPIO 27) → position ≤ zero_pos (no flow)
+   - **AMBER** (GPIO 22) → position ≤ rinse1_pos (~10 GPM, rinse 1)
+   - **BLUE** (GPIO 23) → position ≤ rinse2_pos (~25 GPM, rinse 2)
+   - **GREEN** (GPIO 17) → position > rinse2_pos (online)
+
+### Why Position-Based (Not GPM)?
+
+Rotameter scales are **non-linear** (based on a square-root relationship) and different rotameter types have different scales. Instead of trying to calculate GPM from pixel position, we compare the float’s position ratio directly against **calibrated thresholds** measured once per rotameter type. This is simpler and more accurate.
 
 ---
 
@@ -67,15 +71,18 @@ LUPW-flow-traffic-light-system/
 | Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
 | Red LED (5mm) | 1 | Or traffic light module |
 | Amber LED (5mm) | 1 | Or traffic light module |
+| Blue LED (5mm) | 1 | Or traffic light module |
 | Green LED (5mm) | 1 | Or traffic light module |
-| 150Ω resistor | 3 | Current limiting |
-| 2N2222 NPN transistor | 3 | For 5m cable drive |
-| 1kΩ resistor | 3 | Transistor base resistors |
+| 150Ω resistor | 3 | Current limiting (red, amber, green) |
+| 56Ω resistor | 1 | Current limiting (blue — higher Vf) |
+| 2N2222 NPN transistor | 4 | For 5m cable drive |
+| 1kΩ resistor | 4 | Transistor base resistors |
 
 ### Wiring (with transistor drivers for 5m cable)
 
 ```
 GPIO 17 (Pin 11) ──[1kΩ]──► 2N2222 ──► 5m cable ──► 150Ω ──► Green LED ──► return
+GPIO 23 (Pin 16) ──[1kΩ]──► 2N2222 ──► 5m cable ──►  56Ω ──► Blue LED  ──► return
 GPIO 22 (Pin 15) ──[1kΩ]──► 2N2222 ──► 5m cable ──► 150Ω ──► Amber LED ──► return
 GPIO 27 (Pin 13) ──[1kΩ]──► 2N2222 ──► 5m cable ──► 150Ω ──► Red LED   ──► return
 ```
@@ -87,6 +94,8 @@ See [setup_guide.md](setup_guide.md) for full wiring diagram, resistor calculati
 ## Quick Start
 
 ### 1. Collect & Annotate Dataset
+
+See the full **[Data Labeling Guide](#data-labeling-guide)** below for detailed annotation instructions.
 
 Photograph your rotameter at various flow levels. Annotate with bounding boxes around the **tube** and **float** using [Roboflow](https://roboflow.com) or [CVAT](https://cvat.ai). Export in YOLO format:
 
@@ -130,9 +139,10 @@ pip install -r requirements_pi.txt
 scp runs/detect/rotameter/weights/best.pt pi@<PI_IP>:~/lupw-project/
 
 # On the Pi
-python3 test_gpio.py                          # Verify 3-LED wiring
+python3 test_gpio.py                          # Verify 4-LED wiring
 python3 test_camera.py                        # Verify camera
-python3 inference.py --model best.pt --max-flow 100 --rinse-gpm 10
+python3 inference.py --model best.pt --calibrate  # Calibrate thresholds
+python3 inference.py --model best.pt --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
 ```
 
 ---
@@ -159,13 +169,144 @@ No TensorFlow required — the entire pipeline uses PyTorch/Ultralytics.
 | Parameter | Default | Description |
 |---|---|---|
 | `--model` | `best.pt` | Path to YOLOv8 model weights |
-| `--max-flow` | `100.0` | Your rotameter's max scale reading (GPM) |
-| `--rinse-gpm` | `10.0` | Rinse/online threshold (GPM) |
-| `--threshold` | `0.02` | Below 2% position = zero flow |
+| `--zero-pos` | `0.05` | Position ratio below which = no flow (RED) |
+| `--rinse1-pos` | `0.22` | Position ratio for rinse 1 threshold (AMBER) |
+| `--rinse2-pos` | `0.45` | Position ratio for rinse 2 threshold (BLUE) |
 | `--confidence` | `0.5` | YOLOv8 detection confidence |
 | `--interval` | `0.5` | Seconds between readings |
 | `--log` | `flow_log.csv` | CSV log file |
 | `--display` | off | Show live annotated camera feed |
+| `--calibrate` | off | Calibration mode (prints live position ratio) |
+
+---
+
+## Data Labeling Guide
+
+Proper annotation is critical for model accuracy. The model detects two classes:
+
+| Class | ID | What to Annotate |
+|---|---|---|
+| **tube** | 0 | The full rotameter tube (glass/plastic cylinder) |
+| **float** | 1 | The float body only (ball or bobbin inside the tube) |
+
+### Step-by-Step Labeling Instructions
+
+1. **Upload images** to [Roboflow](https://roboflow.com) (free tier works, create a project with 2 classes: `tube`, `float`)
+
+2. **Draw the tube bounding box:**
+   - Draw a **tight rectangle** around the entire visible tube, including the **dead zones** above and below the scale markings
+   - Include the full glass/plastic cylinder from top to bottom
+   - Do **NOT** include the metal fittings, valves, or mounting hardware outside the tube
+   - The box should be consistent across all images — always the full tube
+
+3. **Draw the float bounding box:**
+   - Draw a **tight rectangle** around the **main float body only**
+   - **EXCLUDE the top extension/guide rod** — the float has a thin extension sticking up from the top. Do NOT include this in the box
+   - The reading is taken from the **top edge** of the float body bounding box, so accurate placement here is critical
+   - If the float is partially obscured by glare/reflections, draw the box where you can see it
+
+4. **Label every image** with both `tube` and `float` (every image should have exactly 2 bounding boxes)
+
+### Annotation Examples
+
+```
+✔️ CORRECT tube box:           ✔️ CORRECT float box:
+┌───────────┐                  │          │
+│ (dead zone) │                  │ ┌────┐  │
+│ ───────── │                  │ │ body │  │  ← box around body only
+│ │ scale  │ │                  │ └────┘  │
+│ │ area   │ │                  │   │      │  ← extension excluded
+│ ───────── │                  │          │
+│ (dead zone) │
+└───────────┘
+
+❌ WRONG float box (includes extension):
+┌──────┐
+│  ext  │  ← DO NOT include this
+│ body  │
+└──────┘
+```
+
+### Tips for Good Annotations
+
+- **Consistency is key** — draw boxes the same way every time
+- **Tight boxes** — minimize empty space around the object
+- Capture images at **various flow levels** (no flow, low, medium, high, max)
+- Include images with **different lighting** conditions if possible
+- Aim for at least **50–100 images** for initial training; more is better
+- Use the 80/20 split (80% train, 20% validation)
+- Export from Roboflow in **YOLOv8 format** (not YOLOv5 — select "YOLOv8")
+
+### YOLO Label Format
+
+Each image gets a `.txt` file with one line per object:
+```
+<class_id> <x_center> <y_center> <width> <height>
+```
+All values are normalised to 0–1 relative to image dimensions. Example:
+```
+0 0.50 0.48 0.12 0.85    # tube (class 0)
+1 0.50 0.62 0.08 0.06    # float (class 1)
+```
+
+---
+
+## Calibration Guide
+
+Because rotameter scales are non-linear, we use **position-based thresholds** instead of calculating GPM. Calibrate once per rotameter type.
+
+### What Is Position Ratio?
+
+The position ratio is where the float sits inside the tube:
+- **0.0** = float at the very bottom of the tube
+- **1.0** = float at the very top of the tube
+- The value is calculated as: `(tube_bottom - float_top) / tube_height`
+
+### How to Calibrate
+
+#### Option A: Use Calibration Mode (Recommended)
+
+1. Set up the Pi with camera pointed at the rotameter
+2. Run calibration mode:
+   ```bash
+   python3 inference.py --model best.pt --calibrate
+   ```
+3. Adjust flow to each threshold level and note the position ratio displayed:
+   - Set flow to **0 GPM** → note the position ratio → this is your `--zero-pos`
+   - Set flow to **10 GPM** → note the position ratio → this is your `--rinse1-pos`
+   - Set flow to **25 GPM** → note the position ratio → this is your `--rinse2-pos`
+4. Run with your calibrated values:
+   ```bash
+   python3 inference.py --model best.pt --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+   ```
+
+#### Option B: Measure with a Ruler
+
+1. Measure the total visible length of the tube (mm)
+2. Measure the distance from the bottom of the tube to each flow mark:
+   - Distance to 10 GPM mark ÷ total tube length = `--rinse1-pos`
+   - Distance to 25 GPM mark ÷ total tube length = `--rinse2-pos`
+3. The zero position is typically ~5% (`--zero-pos 0.05`) to account for the dead zone
+
+### Example Calibration
+
+```
+Tube length:    250mm
+10 GPM mark:     55mm from bottom → 55/250 = 0.22 → --rinse1-pos 0.22
+25 GPM mark:    112mm from bottom → 112/250 = 0.45 → --rinse2-pos 0.45
+Dead zone:       12mm from bottom → 12/250 = 0.05 → --zero-pos 0.05
+```
+
+### Default Thresholds
+
+If you skip calibration, these defaults are used:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `--zero-pos` | 0.05 | Below 5% = no flow (RED) |
+| `--rinse1-pos` | 0.22 | Below 22% = rinse 1 (AMBER) |
+| `--rinse2-pos` | 0.45 | Below 45% = rinse 2 (BLUE) |
+| Above rinse2 | — | Online (GREEN) |
 
 ---
 
