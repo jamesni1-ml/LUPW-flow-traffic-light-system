@@ -198,6 +198,302 @@ python3 monitor_display.py --model best.pt --fullscreen      # Run fullscreen
 
 ---
 
+## Complete Step-by-Step Procedure (Start to Finish)
+
+This is the full procedure in exact order. Every step is spelled out. Do not skip ahead — each step depends on the ones before it.
+
+### Phase 1: Record Training Data on the Raspberry Pi
+
+You need videos of the rotameter at various flow levels. The model learns what the tube and float look like — it does NOT learn flow rates, GPM values, or thresholds. Those come later in Phase 5.
+
+**What you need:** A Raspberry Pi 4 with Camera Module 2, positioned so the camera has a clear, stable view of the rotameter tube. The camera should see the full tube from top to bottom, with minimal angle (straight on is best).
+
+1. **Flash Raspberry Pi OS 64-bit** onto a microSD card using [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Choose "Raspberry Pi OS (64-bit)" — the 64-bit version is required for YOLOv8 performance.
+
+2. **Boot the Pi**, connect to WiFi, and open a terminal.
+
+3. **Enable the camera:**
+   ```bash
+   sudo raspi-config
+   ```
+   Go to **Interface Options → Camera → Enable**. Reboot when prompted.
+
+4. **Install picamera2** (should already exist on Pi OS, but just in case):
+   ```bash
+   sudo apt update && sudo apt install -y python3-picamera2
+   ```
+
+5. **Clone this repository** (or copy the files manually via USB):
+   ```bash
+   git clone https://github.com/jamesni1-ml/LUPW-flow-traffic-light-system.git ~/lupw-project
+   cd ~/lupw-project
+   ```
+
+6. **Position the camera** so it has a clear, stable, straight-on view of the rotameter. Secure the Pi and camera so they don't move — the camera angle should stay the same during recording and later during inference.
+
+7. **Record videos at different flow levels.** You want footage of the float at many different positions (no flow, low flow, medium, high, max):
+   ```bash
+   # Record for 5 minutes (300 seconds). Saves as recording_YYYYMMDD_HHMMSS.h264
+   python3 record_video.py --duration 300
+   ```
+   While recording, **slowly vary the flow rate** through the rotameter — go from 0 to max and back, pausing at different levels. The more varied the float positions in your video, the better the model will learn.
+
+   Record **multiple videos** if needed. Aim to capture:
+   - Float at the very bottom (no flow)
+   - Float at various low positions
+   - Float at mid-range positions
+   - Float near the top (high flow)
+   - Different lighting if your environment changes (day/night, overhead lights on/off)
+
+8. **Copy the `.h264` video files** from the Pi to your training machine (Windows/WSL2):
+   ```bash
+   # From your training machine, pull files from the Pi:
+   scp pi@<PI_IP>:~/lupw-project/recording_*.h264 ./videos/
+   ```
+   Or copy them to a USB drive and transfer manually.
+
+### Phase 2: Extract Frames and Label the Data
+
+This happens on your training machine (Windows or WSL2). You are creating the dataset that teaches the model what a "tube" and a "float" look like.
+
+1. **Extract frames from each video** (defaults to 1 frame per second):
+   ```bash
+   # In the project folder on your training machine
+   python3 extract_frames.py recording_20260318_140000.h264 --output-dir dataset/raw_frames/
+   ```
+   This creates one `.jpg` per second of video. A 5-minute video gives ~300 frames. You don't need all of them — 50–100 good frames is a solid starting point. Delete duplicates or blurry frames.
+
+2. **Upload frames to [Roboflow](https://roboflow.com)** (free tier is fine):
+   - Create a new project
+   - Set it to **Object Detection**
+   - Create exactly 2 classes: `tube` and `float`
+   - Upload your extracted frames
+
+3. **Label every image with exactly 2 bounding boxes:**
+
+   **Tube box:** Draw a tight rectangle around the entire glass/plastic cylinder of the rotameter. Include the dead zones above and below the scale markings. Do NOT include metal fittings, valves, or pipe connections — just the tube.
+
+   **Float box:** Draw a tight rectangle around the **float body only**. This is critical: the float often has a thin extension/guide rod sticking up from the top. **Do NOT include the extension in the box.** The model reads position from the top edge of this box, so if you include the extension, the readings will be wrong.
+
+   ```
+   ✔️ CORRECT float box:        ❌ WRONG (includes extension):
+       │    │                      ┌────┐
+       │    │  ← extension         │ ext│  ← DO NOT include
+       ┌────┐  ← box starts here  │    │
+       │body│                      │body│
+       └────┘                      └────┘
+   ```
+
+4. **Be consistent.** Draw boxes the same way on every image. Tight boxes, same logic, every time.
+
+5. **Split the dataset** in Roboflow: 80% train, 20% validation. Roboflow can do this automatically.
+
+6. **Export from Roboflow in YOLOv8 format:**
+   - Click "Generate" → "Export Dataset"
+   - Format: **YOLOv8** (not YOLOv5, not COCO, not Pascal VOC)
+   - Download the zip file
+   - Extract it so you have this structure inside the project folder:
+     ```
+     dataset/
+     ├── data.yaml         ← Already exists in this repo, but Roboflow generates one too
+     ├── images/
+     │   ├── train/        ← ~80% of your labeled images
+     │   └── val/          ← ~20% of your labeled images
+     └── labels/
+         ├── train/        ← YOLO .txt files (one per image)
+         └── val/
+     ```
+   - If Roboflow's `data.yaml` has different paths, edit it to match the structure above, or use the `data.yaml` already in this repo (which expects `dataset/images/train`, etc.)
+
+### Phase 3: Train the Model
+
+This happens on your training machine in the `vision-ml` conda environment (WSL2 with CUDA GPU recommended).
+
+1. **Open WSL2 terminal** and activate the environment:
+   ```bash
+   conda activate vision-ml
+   ```
+
+2. **Navigate to the project folder** and open the training notebook:
+   ```bash
+   cd /path/to/LUPW-flow-traffic-light-system
+   jupyter notebook training_notebook.ipynb
+   ```
+
+3. **Run all 25 cells in order.** The notebook handles:
+   - Verifying the dataset structure and `data.yaml`
+   - Visualising sample images with bounding boxes (sanity check)
+   - Training YOLOv8 Nano for 100 epochs with data augmentation
+   - Evaluating with mAP metrics (aim for mAP50 > 0.9)
+   - Saving the trained model weights
+
+4. **Training takes ~15–30 minutes** on a modern GPU. When complete, the best model is saved at:
+   ```
+   runs/detect/rotameter/weights/best.pt
+   ```
+
+5. **Check the results.** The notebook shows:
+   - Training curves (loss should decrease, mAP should increase)
+   - Confusion matrix (should show high accuracy for both `tube` and `float`)
+   - Sample predictions on validation images (visually verify the boxes look correct)
+
+   If results are poor (mAP50 < 0.8), you likely need more training images or more consistent labeling. Go back to Phase 2 and add more labeled data.
+
+### Phase 4: Deploy the Model to the Raspberry Pi
+
+1. **Set up the Pi environment** (if not done already):
+   ```bash
+   # On the Pi
+   sudo apt update && sudo apt upgrade -y
+   sudo apt install -y python3-pip python3-venv python3-picamera2
+
+   python3 -m venv ~/lupw-env
+   source ~/lupw-env/bin/activate
+
+   cd ~/lupw-project
+   pip install -r requirements_pi.txt
+   ```
+
+   > This installs `ultralytics`, `opencv-python`, and `RPi.GPIO`. The first run of ultralytics may take a minute to download dependencies.
+
+2. **Copy the trained model** from your training machine to the Pi:
+   ```bash
+   # Run this from your training machine (not the Pi):
+   scp runs/detect/rotameter/weights/best.pt pi@<PI_IP>:~/lupw-project/
+   ```
+   Replace `<PI_IP>` with your Pi's IP address (find it with `hostname -I` on the Pi).
+
+3. **Test the camera** works in the Pi environment:
+   ```bash
+   source ~/lupw-env/bin/activate
+   cd ~/lupw-project
+   python3 test_camera.py
+   ```
+   This captures a test frame. If it fails, check that the camera is enabled (`sudo raspi-config` → Interface Options → Camera) and the ribbon cable is seated properly.
+
+4. **If using GPIO mode**, test the LED wiring:
+   ```bash
+   python3 test_gpio.py
+   ```
+   This cycles through all 4 LEDs. If any don't light up, check wiring per [setup_guide.md](setup_guide.md).
+
+### Phase 5: Calibrate the Thresholds
+
+**This is where you get the 4 numbers for your specific rotameter.** Calibration is completely separate from model training — the model only finds the tube and float in the image. Calibration tells the system what position ratios correspond to your specific flow rates.
+
+**Important:** You cannot do this from recorded videos. `--calibrate` is a **live** mode — it opens the camera, runs the model on each frame, and shows you the position ratio in real time.
+
+1. **Start calibration mode:**
+   ```bash
+   source ~/lupw-env/bin/activate
+   cd ~/lupw-project
+
+   # Use whichever mode you plan to run:
+   python3 monitor_display.py --model best.pt --calibrate
+   # or
+   python3 inference.py --model best.pt --calibrate
+   ```
+
+2. **What you'll see on screen:**
+   - The live camera feed with bounding boxes drawn around the tube and float
+   - A **position ratio** number displayed continuously (e.g., `Position: 0.07`)
+   - This number updates every 0.5 seconds as the model detects the float
+
+3. **Record your 3 threshold values:**
+
+   a. **Set the rotameter to 0 GPM (no flow).** Watch the position ratio on screen. Wait for it to stabilise. Write down the number. This is your `--zero-pos`.
+      - Typical value: 0.03–0.08
+      - This should be low but not exactly 0.00 because the float sits slightly above the very bottom of the tube
+
+   b. **Set the rotameter to 10 GPM.** Adjust the flow until the float sits at the 10 GPM mark on the scale. Watch the position ratio stabilise. Write it down. This is your `--rinse1-pos`.
+      - Typical value: 0.15–0.30 (depends on your rotameter)
+
+   c. **Set the rotameter to 25 GPM.** Same process. Write it down. This is your `--rinse2-pos`.
+      - Typical value: 0.35–0.55 (depends on your rotameter)
+
+   d. **Note your rotameter's maximum scale reading** (printed at the top of the scale, e.g., 88 GPM). This is your `--max-flow` value (monitor display mode only).
+
+4. **Press `q` to exit** calibration mode.
+
+5. **You now have your 4 numbers.** Example:
+   ```
+   zero-pos:   0.05
+   rinse1-pos: 0.22
+   rinse2-pos: 0.45
+   max-flow:   88
+   ```
+
+### What Exactly Does `--calibrate` Do?
+
+When you pass `--calibrate`, the script runs in a special mode:
+
+- It does **NOT** control any LEDs or show the traffic light display
+- It opens the camera and runs the YOLOv8 model on each frame, just like normal
+- It detects the tube and float, calculates the position ratio, and **prints that ratio to the screen** so you can read it
+- The position ratio formula is: `(tube_bottom - float_top) / tube_height`
+  - `tube_bottom` = the bottom edge of the tube bounding box (in pixels)
+  - `float_top` = the top edge of the float bounding box (in pixels)
+  - `tube_height` = the full height of the tube bounding box (in pixels)
+- The result is always between 0.0 (float at the very bottom) and 1.0 (float at the very top)
+- You are simply reading this number at known flow rates to get your threshold values
+
+The same model file (`best.pt`) is used in calibration mode and normal mode. Calibration mode is just a different way of displaying the output — instead of showing a traffic light colour, it shows the raw position number.
+
+### Phase 6: Run the System
+
+Now run the system with your calibrated values.
+
+**Monitor display mode (recommended — no wiring needed):**
+```bash
+source ~/lupw-env/bin/activate
+cd ~/lupw-project
+
+# Windowed (for testing):
+python3 monitor_display.py --model best.pt \
+    --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45 --max-flow 88
+
+# Fullscreen (for production):
+python3 monitor_display.py --model best.pt --fullscreen \
+    --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45 --max-flow 88
+```
+
+**GPIO traffic light mode:**
+```bash
+python3 inference.py --model best.pt \
+    --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+```
+
+**To run on boot automatically**, see the [Run on Boot (systemd)](#run-on-boot-systemd) section below. Put your calibrated values in the `ExecStart` line.
+
+### Phase 7: Verify It's Working
+
+1. **Change the flow rate** and confirm the display/LEDs change state correctly:
+   - No flow → RED / "OFFLINE"
+   - ~10 GPM → AMBER / "LUPW RINSE (10 GPM)"
+   - ~25 GPM → BLUE / "UPW RINSE (25 GPM)"
+   - Above 25 GPM → GREEN / "ONLINE"
+
+2. **Check the CSV log.** Every reading is logged to `flow_log.csv` with timestamp, position, state, and confidence. Open it to verify the values make sense.
+
+3. **If states are wrong**, your calibration values are off. Re-run `--calibrate` and re-measure. The most common issue is that the float position was not at the exact flow rate when you recorded the value — let the flow stabilise before reading the number.
+
+### Summary: Correct Order of Operations
+
+```
+Phase 1: Record video       → Pi camera, record_video.py
+Phase 2: Label data          → Extract frames, label in Roboflow, export YOLOv8
+Phase 3: Train model         → WSL2, training_notebook.ipynb, get best.pt
+Phase 4: Deploy model        → Copy best.pt to Pi, install dependencies
+Phase 5: Calibrate           → Run --calibrate LIVE, note 3 position ratios + max-flow
+Phase 6: Run                 → Run with your calibrated values
+Phase 7: Verify              → Change flow, check states, check CSV log
+```
+
+> **Can I reuse my training videos for calibration?**
+> No. Calibration (`--calibrate`) is a **live** mode that requires the trained model already deployed on the Pi. It runs the camera in real-time and shows you position ratios as you adjust the flow. The training videos from Phase 1 are only used for creating the labeled dataset in Phase 2 — they serve a completely different purpose.
+
+---
+
 ## Training Environment
 
 Trained using existing **vision-ml** conda environment on WSL2 Ubuntu:
@@ -379,6 +675,8 @@ All values are normalised to 0–1 relative to image dimensions. Example:
 ---
 
 ## Calibration Guide
+
+> **For a full walkthrough of the calibration process, see [Phase 5: Calibrate the Thresholds](#phase-5-calibrate-the-thresholds) above.**
 
 Because rotameter scales are non-linear, we use **position-based thresholds** instead of calculating GPM. Calibrate once per rotameter type.
 
