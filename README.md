@@ -13,7 +13,7 @@ A computer vision system that reads **rotameter flow meters** in real-time using
 | **Training** | PyTorch 2.6 + Ultralytics on WSL2 (vision-ml conda env, CUDA 12.4) |
 | **Inference** | Ultralytics YOLOv8 on Raspberry Pi 4 |
 | **Camera** | Raspberry Pi Camera Module 2 (12MP) |
-| **Output** | 4-state GPIO traffic light: RED / AMBER / BLUE / GREEN |
+| **Output** | 4-state traffic light: GPIO LEDs **or** HDMI monitor display |
 
 ### Traffic Light States
 
@@ -73,6 +73,8 @@ Rotameter scales are **non-linear** (based on a square-root relationship) and di
 
 ## Hardware Requirements
 
+### Option A: GPIO Traffic Light (physical LEDs)
+
 | Component | Qty | Notes |
 |---|---|---|
 | Raspberry Pi 4 | 1 | 4GB RAM recommended |
@@ -85,6 +87,19 @@ Rotameter scales are **non-linear** (based on a square-root relationship) and di
 | 56Ω resistor | 1 | Current limiting (blue — higher Vf) |
 | 2N2222 NPN transistor | 4 | For 5m cable drive |
 | 1kΩ resistor | 4 | Transistor base resistors |
+| MicroSD card (32GB+) | 1 | With Raspberry Pi OS 64-bit |
+| USB-C power supply (5V 3A) | 1 | Official Pi 4 PSU |
+
+### Option B: Monitor Display (no wiring needed)
+
+| Component | Qty | Notes |
+|---|---|---|
+| Raspberry Pi 4 | 1 | 4GB RAM recommended |
+| Pi Camera Module 2 | 1 | 12MP, CSI ribbon cable |
+| HDMI monitor | 1 | Any size — connects via micro-HDMI |
+| Micro-HDMI to HDMI cable | 1 | Pi 4 uses micro-HDMI ports |
+| MicroSD card (32GB+) | 1 | With Raspberry Pi OS 64-bit |
+| USB-C power supply (5V 3A) | 1 | Official Pi 4 PSU |
 
 ### Wiring (with transistor drivers for 5m cable)
 
@@ -105,7 +120,18 @@ See [setup_guide.md](setup_guide.md) for full wiring diagram, resistor calculati
 
 See the full **[Data Labeling Guide](#data-labeling-guide)** below for detailed annotation instructions.
 
-Photograph your rotameter at various flow levels. Annotate with bounding boxes around the **tube** and **float** using [Roboflow](https://roboflow.com) or [CVAT](https://cvat.ai). Export in YOLO format:
+**Collect images** using the Pi camera:
+```bash
+# On the Pi — record video at various flow levels
+python3 record_video.py --output rotameter_video.h264 --duration 300
+
+# On your workstation — extract frames (1 per second by default)
+python3 extract_frames.py --input rotameter_video.h264 --output dataset/raw_frames/
+```
+
+Alternatively, photograph the rotameter manually at various flow levels.
+
+Annotate with bounding boxes around the **tube** and **float** using [Roboflow](https://roboflow.com) or [CVAT](https://cvat.ai). Export in YOLO format:
 
 ```
 dataset/
@@ -132,13 +158,26 @@ Run all cells — the notebook handles:
 
 ### 3. Set Up the Raspberry Pi
 
+Use **Raspberry Pi OS 64-bit** (required for best YOLOv8 performance). Download from https://www.raspberrypi.com/software/
+
 ```bash
 # On the Pi
-sudo apt update && sudo apt install -y python3-pip python3-venv python3-picamera2
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3-pip python3-venv python3-picamera2
+
+# Create virtual environment
 python3 -m venv ~/lupw-env
 source ~/lupw-env/bin/activate
+
+# Clone the project (or copy files manually)
+git clone https://github.com/jamesni1-ml/LUPW-flow-traffic-light-system.git ~/lupw-project
+cd ~/lupw-project
+
+# Install dependencies
 pip install -r requirements_pi.txt
 ```
+
+> **Note:** If using monitor display mode only, you can skip the `RPi.GPIO` install — it will still install but won't be used.
 
 ### 4. Transfer Model & Run
 
@@ -233,6 +272,8 @@ Same as `inference.py` minus `RPi.GPIO` — just connect a monitor via HDMI.
 
 ## Configuration
 
+These parameters are shared by both `inference.py` (GPIO mode) and `monitor_display.py` (monitor mode):
+
 | Parameter | Default | Description |
 |---|---|---|
 | `--model` | `best.pt` | Path to YOLOv8 model weights |
@@ -240,10 +281,28 @@ Same as `inference.py` minus `RPi.GPIO` — just connect a monitor via HDMI.
 | `--rinse1-pos` | `0.22` | Position ratio for rinse 1 threshold (AMBER) |
 | `--rinse2-pos` | `0.45` | Position ratio for rinse 2 threshold (BLUE) |
 | `--confidence` | `0.5` | YOLOv8 detection confidence |
+| `--resolution` | `640x480` | Camera capture resolution |
 | `--interval` | `0.5` | Seconds between readings |
 | `--log` | `flow_log.csv` | CSV log file |
-| `--display` | off | Show live annotated camera feed |
 | `--calibrate` | off | Calibration mode (prints live position ratio) |
+
+**GPIO mode only** (`inference.py`):
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--display` | off | Show live annotated camera feed (requires monitor) |
+
+**Monitor mode only** (`monitor_display.py`):
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--fullscreen` | off | Run in fullscreen mode |
+| `--display-size` | `1280x720` | Window/display resolution |
+
+### Controls
+
+- Press **`q`** to quit (monitor display mode, or GPIO mode with `--display`)
+- Press **`Ctrl+C`** to quit (any mode)
 
 ---
 
@@ -334,9 +393,13 @@ The position ratio is where the float sits inside the tube:
 #### Option A: Use Calibration Mode (Recommended)
 
 1. Set up the Pi with camera pointed at the rotameter
-2. Run calibration mode:
+2. Run calibration mode (either script works):
    ```bash
+   # GPIO mode
    python3 inference.py --model best.pt --calibrate
+
+   # Or monitor mode
+   python3 monitor_display.py --model best.pt --calibrate
    ```
 3. Adjust flow to each threshold level and note the position ratio displayed:
    - Set flow to **0 GPM** → note the position ratio → this is your `--zero-pos`
@@ -344,7 +407,11 @@ The position ratio is where the float sits inside the tube:
    - Set flow to **25 GPM** → note the position ratio → this is your `--rinse2-pos`
 4. Run with your calibrated values:
    ```bash
+   # GPIO mode
    python3 inference.py --model best.pt --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+
+   # Or monitor mode
+   python3 monitor_display.py --model best.pt --fullscreen --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
    ```
 
 #### Option B: Measure with a Ruler
@@ -374,6 +441,71 @@ If you skip calibration, these defaults are used:
 | `--rinse1-pos` | 0.22 | Below 22% = rinse 1 (AMBER) |
 | `--rinse2-pos` | 0.45 | Below 45% = rinse 2 (BLUE) |
 | Above rinse2 | — | Online (GREEN) |
+
+---
+
+## Run on Boot (systemd)
+
+To start the system automatically when the Pi powers on, create a systemd service.
+
+### GPIO Traffic Light Mode
+
+Create `/etc/systemd/system/lupw-flow.service`:
+```ini
+[Unit]
+Description=LUPW Flow Traffic Light System
+After=multi-user.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/lupw-project
+Environment="PATH=/home/pi/lupw-env/bin:/usr/bin"
+ExecStart=/home/pi/lupw-env/bin/python3 inference.py --model best.pt --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Monitor Display Mode
+
+Create `/etc/systemd/system/lupw-monitor.service`:
+```ini
+[Unit]
+Description=LUPW Flow Monitor Display
+After=graphical.target
+
+[Service]
+Type=simple
+User=pi
+Environment="DISPLAY=:0"
+Environment="PATH=/home/pi/lupw-env/bin:/usr/bin"
+WorkingDirectory=/home/pi/lupw-project
+ExecStart=/home/pi/lupw-env/bin/python3 monitor_display.py --model best.pt --fullscreen --zero-pos 0.05 --rinse1-pos 0.22 --rinse2-pos 0.45
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target
+```
+
+> **Note:** Monitor mode requires the desktop environment (`graphical.target`), not just the console. Make sure the Pi is set to boot to desktop: `sudo raspi-config` → System Options → Boot / Auto Login → Desktop Autologin.
+
+### Enable the service
+
+```bash
+# Pick one:
+sudo systemctl enable lupw-flow.service      # GPIO mode
+sudo systemctl enable lupw-monitor.service   # Monitor mode
+
+# Start it now:
+sudo systemctl start lupw-flow.service       # or lupw-monitor.service
+
+# Check status:
+sudo systemctl status lupw-flow.service       # or lupw-monitor.service
+```
 
 ---
 
