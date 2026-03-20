@@ -123,10 +123,8 @@ See the full **[Data Labeling Guide](#data-labeling-guide)** below for detailed 
 **Collect images** using the Pi camera:
 ```bash
 # On the Pi — record video at various flow levels (saves as recording_YYYYMMDD_HHMMSS.h264)
-python3 record_video.py --duration 300
-
-# On your workstation — extract frames (1 per second by default)
-python3 extract_frames.py recording_20260318_140000.h264 --output-dir dataset/raw_frames/
+mkdir -p ~/Desktop/frames && rpicam-still -o ~/Desktop/frames/frame%05d.jpg -t 0 --timelapse 200 --width 640 --height 480 -q 70
+# This records 5frames per second at 640x480 and quality of 70 until you close the video view window or Cntrl+C in terminal
 ```
 
 Alternatively, photograph the rotameter manually at various flow levels.
