@@ -122,8 +122,10 @@ See the full **[Data Labeling Guide](#data-labeling-guide)** below for detailed 
 
 **Collect images** using the Pi camera:
 ```bash
-# On the Pi — record video at various flow levels (saves as recording_YYYYMMDD_HHMMSS.h264)
+# On the Pi — record video at various flow levels
+
 mkdir -p ~/Desktop/frames && rpicam-still -o ~/Desktop/frames/frame%05d.jpg -t 0 --timelapse 200 --width 640 --height 480 -q 70
+
 # This records 5frames per second at 640x480 and quality of 70 until you close the video view window or Cntrl+C in terminal
 ```
 
